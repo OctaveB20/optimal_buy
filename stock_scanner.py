@@ -6,6 +6,11 @@ du portefeuille, calcule un score d'opportunité d'achat (RSI, MACD, volume,
 drawdown, support) et envoie un email automatique quand une action atteint
 un score "optimal".
 
+Scoring : chaque critère rapporte des points de façon CONTINUE (interpolation
+linéaire entre une borne "faible" et une borne "excellente"), et non plus de
+façon binaire (tout ou rien). Les bornes restent volontairement resserrées
+pour garder une notation exigeante.
+
 Installation :
     pip install streamlit yfinance pandas numpy streamlit-autorefresh
 
@@ -65,8 +70,23 @@ st.markdown("""
     .badge-yellow { background: rgba(234,179,8,0.18); color: #facc15; }
     .badge-red { background: rgba(239,68,68,0.18); color: #f87171; }
 
+    .crit-row { display: flex; justify-content: space-between; font-size: 0.82rem; }
     .crit-ok { color: #4ade80; }
+    .crit-mid { color: #facc15; }
     .crit-ko { color: #6b7280; }
+
+    .bar-track {
+        background: #262b36;
+        border-radius: 6px;
+        height: 6px;
+        width: 100%;
+        margin: 2px 0 8px 0;
+        overflow: hidden;
+    }
+    .bar-fill {
+        height: 100%;
+        border-radius: 6px;
+    }
 
     .section-title {
         font-size: 1.15rem;
@@ -159,6 +179,24 @@ def compute_macd(close: pd.Series, fast=12, slow=26, signal=9):
     return macd_line, signal_line
 
 
+def scaled_score(value: float, worst: float, best: float, max_points: float) -> float:
+    """
+    Interpolation linéaire non binaire entre deux bornes.
+    - value <= worst (ou >= worst selon le sens)  -> 0 point
+    - value atteint/dépasse best                  -> max_points
+    - entre les deux                               -> proportionnel
+
+    Fonctionne aussi bien pour un critère "plus c'est haut mieux c'est"
+    (best > worst) que pour un critère "plus c'est bas mieux c'est"
+    (best < worst, ex: RSI).
+    """
+    if best == worst:
+        return max_points if value >= best else 0.0
+    frac = (value - worst) / (best - worst)
+    frac = max(0.0, min(1.0, frac))
+    return round(frac * max_points, 2)
+
+
 @st.cache_data(ttl=900, show_spinner=False)
 def fetch_history(ticker: str) -> pd.DataFrame:
     try:
@@ -178,40 +216,62 @@ def analyze_ticker(ticker: str) -> dict | None:
     close = df["Close"].dropna()
     volume = df["Volume"].dropna()
 
+    # --- RSI ---
     rsi_series = compute_rsi(close)
     rsi = float(rsi_series.iloc[-1])
+    # 30 pts max : RSI <= 20 (survente franche) -> 30 pts ; RSI >= 55 -> 0 pt
+    rsi_score = scaled_score(rsi, worst=55, best=20, max_points=30)
 
+    # --- MACD (force du signal, pas juste bullish/bearish) ---
     macd_line, signal_line = compute_macd(close)
-    macd_bullish = bool(macd_line.iloc[-1] > signal_line.iloc[-1])
+    last_price = float(close.iloc[-1])
+    macd_hist = float(macd_line.iloc[-1] - signal_line.iloc[-1])
+    macd_hist_pct = (macd_hist / last_price) * 100 if last_price else 0.0
+    macd_bullish = macd_hist > 0
+    # 20 pts max : histogramme >= +1.0% du prix -> 20 pts ; <= -0.3% -> 0 pt
+    macd_score = scaled_score(macd_hist_pct, worst=-0.3, best=1.0, max_points=20)
 
+    # --- Volume ---
     vol_avg20 = volume.rolling(20).mean().iloc[-1]
     vol_today = volume.iloc[-1]
-    vol_above_avg = bool(vol_today > vol_avg20) if pd.notna(vol_avg20) else False
+    vol_ratio = float(vol_today / vol_avg20) if pd.notna(vol_avg20) and vol_avg20 > 0 else 0.0
+    vol_above_avg = vol_ratio > 1.0
+    # 15 pts max : ratio >= 2.0x la moyenne -> 15 pts ; <= 0.8x -> 0 pt
+    vol_score = scaled_score(vol_ratio, worst=0.8, best=2.0, max_points=15)
 
+    # --- Drawdown ---
     recent_high = close.rolling(126, min_periods=30).max().iloc[-1]
-    last_price = float(close.iloc[-1])
     drawdown_pct = float((recent_high - last_price) / recent_high * 100) if recent_high else 0.0
     drawdown_ok = drawdown_pct > 15
+    # 20 pts max : baisse >= 30% -> 20 pts ; <= 5% -> 0 pt
+    drawdown_score = scaled_score(drawdown_pct, worst=5, best=30, max_points=20)
 
+    # --- Support (position relative à la SMA50, en %) ---
     sma50 = close.rolling(50, min_periods=30).mean().iloc[-1]
-    above_support = bool(last_price > sma50) if pd.notna(sma50) else False
+    pct_vs_sma50 = float((last_price - sma50) / sma50 * 100) if pd.notna(sma50) and sma50 > 0 else -100.0
+    above_support = pct_vs_sma50 > 0
+    # 15 pts max : >= +8% au-dessus de la SMA50 -> 15 pts ; <= -5% -> 0 pt
+    support_score = scaled_score(pct_vs_sma50, worst=-5, best=8, max_points=15)
 
-    score = 0
-    score += 30 if rsi < 35 else 0
-    score += 20 if macd_bullish else 0
-    score += 15 if vol_above_avg else 0
-    score += 20 if drawdown_ok else 0
-    score += 15 if above_support else 0
+    score = round(rsi_score + macd_score + vol_score + drawdown_score + support_score, 1)
 
     return {
         "ticker": ticker,
         "price": last_price,
         "rsi": rsi,
+        "rsi_score": rsi_score,
         "macd_bullish": macd_bullish,
+        "macd_hist_pct": macd_hist_pct,
+        "macd_score": macd_score,
         "vol_above_avg": vol_above_avg,
+        "vol_ratio": vol_ratio,
+        "vol_score": vol_score,
         "drawdown_pct": drawdown_pct,
         "drawdown_ok": drawdown_ok,
+        "drawdown_score": drawdown_score,
         "above_support": above_support,
+        "pct_vs_sma50": pct_vs_sma50,
+        "support_score": support_score,
         "score": score,
     }
 
@@ -228,7 +288,7 @@ def send_email_alert(smtp_server, smtp_port, sender_email, sender_password, reci
     lines = ["Les actions suivantes ont atteint un score d'achat optimal :", ""]
     for opp in opportunities:
         lines.append(
-            f"- {opp['ticker']} : score {opp['score']}/100 | RSI {opp['rsi']:.1f} | "
+            f"- {opp['ticker']} : score {opp['score']:.1f}/100 | RSI {opp['rsi']:.1f} | "
             f"prix {opp['price']:.2f} | drawdown {opp['drawdown_pct']:.1f}%"
         )
     msg.attach(MIMEText("\n".join(lines), "plain"))
@@ -300,6 +360,25 @@ def score_bucket(score):
     elif score >= threshold_watch:
         return "yellow", "🟡 À surveiller"
     return "red", "🔴 Rien à faire"
+
+
+def crit_class(points, max_points):
+    """Couleur du critère selon la fraction de points obtenus (et non plus juste oui/non)."""
+    frac = points / max_points if max_points else 0
+    if frac >= 0.66:
+        return "crit-ok"
+    elif frac >= 0.33:
+        return "crit-mid"
+    return "crit-ko"
+
+
+def bar_color(points, max_points):
+    frac = points / max_points if max_points else 0
+    if frac >= 0.66:
+        return "#4ade80"
+    elif frac >= 0.33:
+        return "#facc15"
+    return "#ef4444"
 
 
 # ============================================================
@@ -379,7 +458,7 @@ if results:
             color, label = score_bucket(r["score"])
             cols = st.columns([3, 1, 1, 1, 1, 1])
             cols[0].markdown(f"**{r['ticker']}** — {r['name']}  \n<span style='color:#9aa0ab;font-size:0.8rem'>{r['category']}</span>", unsafe_allow_html=True)
-            cols[1].markdown(f"<span class='score-badge badge-{color}'>{int(r['score'])}/100</span>", unsafe_allow_html=True)
+            cols[1].markdown(f"<span class='score-badge badge-{color}'>{r['score']:.1f}/100</span>", unsafe_allow_html=True)
             cols[2].markdown(f"RSI: **{r['rsi']:.0f}**")
             cols[3].markdown(f"Prix: **{r['price']:.2f}**")
             cols[4].markdown(f"Drawdown: **{r['drawdown_pct']:.1f}%**")
@@ -394,16 +473,26 @@ if results:
             for idx, (_, r) in enumerate(cat_results.iterrows()):
                 color, label = score_bucket(r["score"])
                 with cols[idx % 3]:
+                    def bar(points, max_points):
+                        pct = max(0, min(100, (points / max_points) * 100)) if max_points else 0
+                        col = bar_color(points, max_points)
+                        return f'<div class="bar-track"><div class="bar-fill" style="width:{pct:.0f}%; background:{col};"></div></div>'
+
                     st.markdown(f"""
                     <div class="card card-{color}">
-                        <div class="ticker-name">{r['ticker']} <span class="score-badge badge-{color}">{int(r['score'])}/100</span></div>
+                        <div class="ticker-name">{r['ticker']} <span class="score-badge badge-{color}">{r['score']:.1f}/100</span></div>
                         <div class="ticker-sub">{r['name']}</div>
-                        <div style="font-size:0.85rem; line-height:1.6;">
-                            <span class="{'crit-ok' if r['rsi'] < 35 else 'crit-ko'}">RSI &lt; 35 → {r['rsi']:.0f}</span><br>
-                            <span class="{'crit-ok' if r['macd_bullish'] else 'crit-ko'}">MACD haussier {'✔' if r['macd_bullish'] else '✘'}</span><br>
-                            <span class="{'crit-ok' if r['vol_above_avg'] else 'crit-ko'}">Volume &gt; moy20 {'✔' if r['vol_above_avg'] else '✘'}</span><br>
-                            <span class="{'crit-ok' if r['drawdown_ok'] else 'crit-ko'}">Baisse &gt; 15% {'✔' if r['drawdown_ok'] else '✘'} ({r['drawdown_pct']:.1f}%)</span><br>
-                            <span class="{'crit-ok' if r['above_support'] else 'crit-ko'}">Au-dessus support {'✔' if r['above_support'] else '✘'}</span><br>
+                        <div style="font-size:0.85rem; line-height:1.5;">
+                            <div class="crit-row"><span class="{crit_class(r['rsi_score'], 30)}">RSI {r['rsi']:.0f}</span><span>{r['rsi_score']:.1f}/30</span></div>
+                            {bar(r['rsi_score'], 30)}
+                            <div class="crit-row"><span class="{crit_class(r['macd_score'], 20)}">MACD hist. {r['macd_hist_pct']:+.2f}%</span><span>{r['macd_score']:.1f}/20</span></div>
+                            {bar(r['macd_score'], 20)}
+                            <div class="crit-row"><span class="{crit_class(r['vol_score'], 15)}">Volume x{r['vol_ratio']:.2f}</span><span>{r['vol_score']:.1f}/15</span></div>
+                            {bar(r['vol_score'], 15)}
+                            <div class="crit-row"><span class="{crit_class(r['drawdown_score'], 20)}">Baisse {r['drawdown_pct']:.1f}%</span><span>{r['drawdown_score']:.1f}/20</span></div>
+                            {bar(r['drawdown_score'], 20)}
+                            <div class="crit-row"><span class="{crit_class(r['support_score'], 15)}">Vs SMA50 {r['pct_vs_sma50']:+.1f}%</span><span>{r['support_score']:.1f}/15</span></div>
+                            {bar(r['support_score'], 15)}
                             <b>Prix actuel : {r['price']:.2f}</b>
                         </div>
                     </div>
