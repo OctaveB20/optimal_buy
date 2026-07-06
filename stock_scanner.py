@@ -935,51 +935,7 @@ def send_email_alert(smtp_server, smtp_port, sender_email, sender_password, reci
 # ============================================================
 # SIDEBAR - CONFIG EMAIL & SCAN
 # ============================================================
-with st.sidebar:
-    st.header("⚙️ Configuration")
 
-    st.subheader("📬 Alertes email")
-    email_enabled = st.checkbox("Activer les alertes email", value=False)
-    smtp_server = st.text_input("Serveur SMTP", value="smtp.gmail.com")
-    smtp_port = st.number_input("Port SMTP", value=587, step=1)
-    sender_email = st.text_input("Email expéditeur")
-    sender_password = st.text_input("Mot de passe / mot de passe d'application", type="password")
-    recipient_email = st.text_input("Email destinataire")
-
-    st.caption(
-        "💡 Pour Gmail, utilise un **mot de passe d'application** "
-        "(Compte Google → Sécurité → Mots de passe des applications), "
-        "pas ton mot de passe habituel."
-    )
-
-    st.divider()
-    st.subheader("🎯 Seuils de score")
-    threshold_buy = st.slider("Seuil 'Achat potentiel' 🟢", 50, 100, 65)
-    threshold_watch = st.slider("Seuil 'À surveiller' 🟡", 30, threshold_buy - 1, 45)
-
-    st.divider()
-    st.subheader("🔄 Scan automatique")
-    auto_scan = st.checkbox("Rafraîchissement automatique", value=False, disabled=not AUTOREFRESH_AVAILABLE)
-    if not AUTOREFRESH_AVAILABLE:
-        st.caption("Installe `streamlit-autorefresh` pour activer le scan automatique en continu.")
-    interval_min = st.number_input("Intervalle (minutes)", min_value=5, max_value=180, value=30, step=5)
-
-    scan_button = st.button("🔍 Scanner maintenant", type="primary", use_container_width=True)
-
-if AUTOREFRESH_AVAILABLE and auto_scan:
-    st_autorefresh(interval=int(interval_min) * 60 * 1000, key="auto_scanner_refresh")
-
-# ============================================================
-# ETAT SESSION (pour éviter de spammer les emails)
-# ============================================================
-if "alerted_today" not in st.session_state:
-    st.session_state.alerted_today = {}  # {ticker: date_str}
-if "last_results" not in st.session_state:
-    st.session_state.last_results = None
-if "last_scan_time" not in st.session_state:
-    st.session_state.last_scan_time = None
-
-should_scan = scan_button or (auto_scan and AUTOREFRESH_AVAILABLE) or st.session_state.last_results is None
 
 
 def score_bucket(score):
