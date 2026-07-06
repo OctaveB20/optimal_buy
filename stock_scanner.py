@@ -326,8 +326,8 @@ with st.sidebar:
 
     st.divider()
     st.subheader("🎯 Seuils de score")
-    threshold_buy = st.slider("Seuil 'Achat potentiel' 🟢", 50, 100, 80)
-    threshold_watch = st.slider("Seuil 'À surveiller' 🟡", 30, threshold_buy - 1, 60)
+    threshold_buy = st.slider("Seuil 'Achat potentiel' 🟢", 50, 100, 65)
+    threshold_watch = st.slider("Seuil 'À surveiller' 🟡", 30, threshold_buy - 1, 45)
 
     st.divider()
     st.subheader("🔄 Scan automatique")
