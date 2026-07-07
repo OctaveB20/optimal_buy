@@ -228,6 +228,25 @@ def fetch_history(ticker: str) -> pd.DataFrame:
         return pd.DataFrame()
 
 
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_fundamentals(ticker: str) -> dict:
+    """
+    Récupère les indicateurs fondamentaux via yfinance.
+    Renvoie des fractions (ex: 0.15 = 15%) ou None si la donnée est indisponible
+    (yfinance ne fournit pas toujours ces champs pour toutes les valeurs).
+    Cache 24h car ces données bougent lentement (résultats trimestriels).
+    """
+    try:
+        info = yf.Ticker(ticker).info
+        return {
+            "revenue_growth": info.get("revenueGrowth"),
+            "gross_margin": info.get("grossMargins"),
+            "profit_margin": info.get("profitMargins"),
+        }
+    except Exception:
+        return {"revenue_growth": None, "gross_margin": None, "profit_margin": None}
+
+
 def analyze_ticker(ticker: str) -> dict | None:
     df = fetch_history(ticker)
     if df.empty or len(df) < 60 or "Close" not in df:
@@ -273,7 +292,34 @@ def analyze_ticker(ticker: str) -> dict | None:
     # 15 pts max : >= +8% au-dessus de la SMA50 -> 15 pts ; <= -5% -> 0 pt
     support_score = scaled_score(pct_vs_sma50, worst=-5, best=8, max_points=15)
 
-    score = round(rsi_score + macd_score + vol_score + drawdown_score + support_score, 1)
+    # --- Fondamentaux (qualité de l'entreprise, pas juste le prix) ---
+    fundamentals = fetch_fundamentals(ticker)
+    revenue_growth = fundamentals["revenue_growth"]
+    gross_margin = fundamentals["gross_margin"]
+    profit_margin = fundamentals["profit_margin"]
+
+    # +12 pts (continu) : croissance CA <= 0% -> 0 pt ; >= 20% -> 12 pts pleins
+    growth_score = scaled_score(
+        revenue_growth * 100 if revenue_growth is not None else -100,
+        worst=0, best=20, max_points=12
+    )
+    # +10 pts (continu) : marge brute <= 20% -> 0 pt ; >= 60% -> 10 pts pleins
+    margin_score = scaled_score(
+        gross_margin * 100 if gross_margin is not None else -100,
+        worst=20, best=60, max_points=10
+    )
+    # +13 pts (continu) : marge nette <= -10% -> 0 pt ; >= 15% -> 13 pts pleins
+    profit_score = scaled_score(
+        profit_margin * 100 if profit_margin is not None else -100,
+        worst=-10, best=15, max_points=13
+    )
+
+    # Total brut sur 135 (100 technique + 35 fondamentaux), renormalisé sur 100
+    raw_total = (
+        rsi_score + macd_score + vol_score + drawdown_score + support_score
+        + growth_score + margin_score + profit_score
+    )
+    score = round(raw_total * (100.0 / 135.0), 1)
 
     return {
         "ticker": ticker,
@@ -292,6 +338,13 @@ def analyze_ticker(ticker: str) -> dict | None:
         "above_support": above_support,
         "pct_vs_sma50": pct_vs_sma50,
         "support_score": support_score,
+        "revenue_growth": revenue_growth,
+        "gross_margin": gross_margin,
+        "profit_margin": profit_margin,
+        "growth_score": growth_score,
+        "margin_score": margin_score,
+        "profit_score": profit_score,
+        "raw_total": round(raw_total, 1),
         "score": score,
     }
 
@@ -650,6 +703,15 @@ if results:
                         col = bar_color(points, max_points)
                         return f'<div class="bar-track"><div class="bar-fill" style="width:{pct:.0f}%; background:{col};"></div></div>'
 
+                    # Libellés fondamentaux (gèrent le cas où la donnée est indisponible)
+                    growth_label = f"Croissance CA {r['revenue_growth']*100:.1f}%" if r["revenue_growth"] is not None else "Croissance CA : N/A"
+                    margin_label = f"Marge brute {r['gross_margin']*100:.1f}%" if r["gross_margin"] is not None else "Marge brute : N/A"
+                    if r["profit_margin"] is not None:
+                        profit_check = "✔" if r["profit_margin"] > 0 else "✘"
+                        profit_label = f"Rentable {profit_check} (marge nette {r['profit_margin']*100:.1f}%)"
+                    else:
+                        profit_label = "Rentable : N/A"
+
                     st.markdown(f"""
                     <div class="card card-{color}">
                         <div class="ticker-name">{r['ticker']} <span class="score-badge badge-{color}">{r['score']:.1f}/100</span></div>
@@ -665,6 +727,13 @@ if results:
                             {bar(r['drawdown_score'], 20)}
                             <div class="crit-row"><span class="{crit_class(r['support_score'], 15)}">Vs SMA50 {r['pct_vs_sma50']:+.1f}%</span><span>{r['support_score']:.1f}/15</span></div>
                             {bar(r['support_score'], 15)}
+                            <div style="margin-top:6px; padding-top:6px; border-top:1px dashed #2a2f3a; color:#9aa0ab; font-size:0.75rem;">Fondamentaux</div>
+                            <div class="crit-row"><span class="{crit_class(r['growth_score'], 12)}">{growth_label}</span><span>{r['growth_score']:.0f}/12</span></div>
+                            {bar(r['growth_score'], 12)}
+                            <div class="crit-row"><span class="{crit_class(r['margin_score'], 10)}">{margin_label}</span><span>{r['margin_score']:.0f}/10</span></div>
+                            {bar(r['margin_score'], 10)}
+                            <div class="crit-row"><span class="{crit_class(r['profit_score'], 13)}">{profit_label}</span><span>{r['profit_score']:.0f}/13</span></div>
+                            {bar(r['profit_score'], 13)}
                             <b>Prix actuel : {r['price']:.2f}</b>
                         </div>
                     </div>
