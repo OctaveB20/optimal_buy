@@ -1,5 +1,7 @@
 streamlit
+streamlit-autorefresh
 yfinance
 pandas
 numpy
-streamlit-autorefresh
+supabase
+requests
