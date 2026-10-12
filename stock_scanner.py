@@ -17,10 +17,13 @@ entre deux alertes pour un même titre (cooldown) afin d'éviter le spam en
 cas d'oscillation autour d'une frontière.
 
 Installation :
-    pip install streamlit yfinance pandas numpy streamlit-autorefresh
+    pip install streamlit yfinance pandas numpy streamlit-autorefresh supabase requests
 
 Lancement :
     streamlit run stock_scanner.py
+
+Configuration : secrets Streamlit SUPABASE_URL, SUPABASE_KEY, RESEND_API_KEY,
+RESEND_FROM_EMAIL. Voir les étapes de configuration fournies avec le code.
 """
 
 import time
@@ -30,9 +33,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import yfinance as yf
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import os
+import requests
+from supabase import create_client
 
 try:
     from streamlit_autorefresh import st_autorefresh
@@ -44,6 +47,84 @@ except ImportError:
 # CONFIG PAGE + STYLE (repris du look du portfolio tracker)
 # ============================================================
 st.set_page_config(page_title="Stock Opportunity Scanner", page_icon="📈", layout="wide")
+
+# ============================================================
+# CONFIGURATION PERSISTANTE SUPABASE + EMAIL RESEND
+# Secrets attendus dans .streamlit/secrets.toml (ou variables d'environnement)
+# SUPABASE_URL, SUPABASE_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL
+# ============================================================
+def get_setting(name, default=""):
+    try:
+        return st.secrets.get(name, os.getenv(name, default))
+    except Exception:
+        return os.getenv(name, default)
+
+SUPABASE_URL = get_setting("SUPABASE_URL")
+SUPABASE_KEY = get_setting("SUPABASE_KEY")  # clé serveur/service_role, jamais exposée côté navigateur
+RESEND_API_KEY = get_setting("RESEND_API_KEY")
+RESEND_FROM_EMAIL = get_setting("RESEND_FROM_EMAIL")
+
+@st.cache_resource
+def get_supabase_client():
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    try:
+        return create_client(SUPABASE_URL, SUPABASE_KEY)
+    except Exception:
+        return None
+
+supabase = get_supabase_client()
+
+def load_recipient_email():
+    if supabase is None:
+        return ""
+    try:
+        rows = supabase.table("app_settings").select("recipient_email").eq("id", 1).limit(1).execute().data
+        return rows[0].get("recipient_email", "") if rows else ""
+    except Exception:
+        return ""
+
+def save_recipient_email(email):
+    if supabase is None:
+        return False, "Supabase n'est pas configuré. Vérifie SUPABASE_URL et SUPABASE_KEY."
+    try:
+        supabase.table("app_settings").upsert({"id": 1, "recipient_email": email}).execute()
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+def load_persistent_alert_state():
+    if supabase is None:
+        return {}
+    try:
+        rows = supabase.table("ticker_alert_state").select("ticker,score,bucket,last_alert_time").execute().data
+        state = {}
+        for row in rows:
+            last = row.get("last_alert_time")
+            if last:
+                try:
+                    last = datetime.fromisoformat(last.replace("Z", "+00:00"))
+                    if last.tzinfo is not None:
+                        last = last.replace(tzinfo=None)
+                except Exception:
+                    last = None
+            state[row["ticker"]] = {"score": float(row["score"]), "bucket": row["bucket"], "last_alert_time": last}
+        return state
+    except Exception:
+        return {}
+
+def persist_alert_state(ticker, state):
+    if supabase is None:
+        return
+    try:
+        last = state.get("last_alert_time")
+        supabase.table("ticker_alert_state").upsert({
+            "ticker": ticker, "score": float(state["score"]), "bucket": state["bucket"],
+            "last_alert_time": last.isoformat() if last else None,
+            "updated_at": datetime.utcnow().isoformat() + "Z"
+        }).execute()
+    except Exception as exc:
+        st.warning(f"Impossible de sauvegarder l'état de {ticker} dans Supabase : {exc}")
 
 st.markdown("""
 <style>
@@ -166,6 +247,27 @@ WATCHLIST = {
     "ISRG": ("Intuitive Surgical", "Santé"),
     "TMO": ("Thermo Fisher Scientific", "Santé"),
     "DE": ("Deere & Company", "Industrie"),
+    # Actions spéculatives supplémentaires : forte volatilité / risque élevé
+    "IONQ": ("IonQ", "Spéculatif - Informatique quantique"),
+    "RGTI": ("Rigetti Computing", "Spéculatif - Informatique quantique"),
+    "QBTS": ("D-Wave Quantum", "Spéculatif - Informatique quantique"),
+    "QUBT": ("Quantum Computing Inc.", "Spéculatif - Informatique quantique"),
+    "LUNR": ("Intuitive Machines", "Spéculatif - Spatial"),
+    "ACHR": ("Archer Aviation", "Spéculatif - eVTOL"),
+    "JOBY": ("Joby Aviation", "Spéculatif - eVTOL"),
+    "OKLO": ("Oklo", "Spéculatif - Nucléaire"),
+    "SMR": ("NuScale Power", "Spéculatif - Nucléaire"),
+    "SERV": ("Serve Robotics", "Spéculatif - Robotique"),
+    "TEM": ("Tempus AI", "Spéculatif - IA/Santé"),
+    "RXRX": ("Recursion Pharmaceuticals", "Spéculatif - Biotech/IA"),
+    "HIMS": ("Hims & Hers Health", "Croissance spéculative - Santé"),
+    "SOUN": ("SoundHound AI", "Spéculatif - IA"),
+    "BBAI": ("BigBear.ai", "Spéculatif - IA/Défense"),
+    "AI": ("C3.ai", "Spéculatif - IA"),
+    "DNA": ("Ginkgo Bioworks", "Spéculatif - Biotechnologie"),
+    "ENVX": ("Enovix", "Spéculatif - Batteries"),
+    "PL": ("Planet Labs", "Spéculatif - Spatial/Données"),
+    "RDW": ("Redwire", "Spéculatif - Spatial/Défense"),
 }
 
 # Positions actuelles du portefeuille (hors ETF, non spéculatives et non déjà présentes)
@@ -446,24 +548,28 @@ def _build_email_text(items: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def send_email_alert(smtp_server, smtp_port, sender_email, sender_password, recipient_email, items):
-    msg = MIMEMultipart("alternative")
-    msg["From"] = sender_email
-    msg["To"] = recipient_email
-    msg["Subject"] = f"📈 {len(items)} mouvement(s) sur ta watchlist - {date.today().isoformat()}"
-
-    msg.attach(MIMEText(_build_email_text(items), "plain"))
-    msg.attach(MIMEText(_build_email_html(items), "html"))
-
+def send_email_alert(recipient_email, items):
+    """Envoie l'alerte via l'API Resend ; aucun mot de passe de boîte mail n'est stocké."""
+    if not RESEND_API_KEY or not RESEND_FROM_EMAIL:
+        return False, "Configure RESEND_API_KEY et RESEND_FROM_EMAIL dans les secrets."
+    payload = {
+        "from": RESEND_FROM_EMAIL,
+        "to": [recipient_email],
+        "subject": f"📈 {len(items)} mouvement(s) sur ta watchlist - {date.today().isoformat()}",
+        "html": _build_email_html(items),
+        "text": _build_email_text(items),
+    }
     try:
-        server = smtplib.SMTP(smtp_server, smtp_port, timeout=15)
-        server.starttls()
-        server.login(sender_email, sender_password)
-        server.send_message(msg)
-        server.quit()
-        return True, None
-    except Exception as e:
-        return False, str(e)
+        response = requests.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json=payload, timeout=20,
+        )
+        if response.ok:
+            return True, None
+        return False, f"Resend HTTP {response.status_code}: {response.text[:500]}"
+    except Exception as exc:
+        return False, str(exc)
 
 
 # ============================================================
@@ -473,18 +579,32 @@ with st.sidebar:
     st.header("⚙️ Configuration")
 
     st.subheader("📬 Alertes email")
-    email_enabled = st.checkbox("Activer les alertes email", value=False)
-    smtp_server = st.text_input("Serveur SMTP", value="smtp.gmail.com")
-    smtp_port = st.number_input("Port SMTP", value=587, step=1)
-    sender_email = st.text_input("Email expéditeur")
-    sender_password = st.text_input("Mot de passe / mot de passe d'application", type="password")
-    recipient_email = st.text_input("Email destinataire")
-
-    st.caption(
-        "💡 Pour Gmail, utilise un **mot de passe d'application** "
-        "(Compte Google → Sécurité → Mots de passe des applications), "
-        "pas ton mot de passe habituel."
+    email_enabled = st.checkbox("Activer les alertes email", value=True)
+    if "saved_recipient_email" not in st.session_state:
+        st.session_state.saved_recipient_email = load_recipient_email()
+    recipient_email = st.text_input(
+        "Email destinataire",
+        value=st.session_state.saved_recipient_email,
+        placeholder="toi@example.com",
+        key="recipient_email_input",
     )
+    if st.button("💾 Enregistrer mon email", use_container_width=True):
+        email_to_save = recipient_email.strip()
+        if "@" not in email_to_save or "." not in email_to_save.split("@")[-1]:
+            st.error("Entre une adresse email valide.")
+        else:
+            ok, err = save_recipient_email(email_to_save)
+            if ok:
+                st.session_state.saved_recipient_email = email_to_save
+                st.success("Adresse enregistrée dans Supabase. Tu n'auras plus à la saisir à chaque lancement.")
+            else:
+                st.error(err)
+    if not supabase:
+        st.warning("Supabase non connecté : configure SUPABASE_URL et SUPABASE_KEY dans les secrets.")
+    if not RESEND_API_KEY or not RESEND_FROM_EMAIL:
+        st.warning("Configure aussi Resend : RESEND_API_KEY et RESEND_FROM_EMAIL.")
+    else:
+        st.caption(f"Expéditeur configuré : {RESEND_FROM_EMAIL}")
 
     st.divider()
     st.subheader("🔔 Déclenchement des alertes")
@@ -525,8 +645,8 @@ if AUTOREFRESH_AVAILABLE and auto_scan:
 # ETAT SESSION
 # ============================================================
 if "ticker_alert_state" not in st.session_state:
-    # ticker -> {"score": float, "bucket": "red"/"yellow"/"green", "last_alert_time": datetime|None}
-    st.session_state.ticker_alert_state = {}
+    # État persistant : récupéré depuis Supabase, pour conserver le cooldown après redémarrage.
+    st.session_state.ticker_alert_state = load_persistent_alert_state()
 if "last_results" not in st.session_state:
     st.session_state.last_results = None
 if "last_scan_time" not in st.session_state:
@@ -631,24 +751,24 @@ if should_scan:
             })
 
         # Mise à jour de l'état pour ce ticker
-        st.session_state.ticker_alert_state[ticker] = {
+        new_state = {
             "score": r["score"],
             "bucket": bucket_color,
             "last_alert_time": now if alert_reason else (prev.get("last_alert_time") if prev else None),
         }
+        st.session_state.ticker_alert_state[ticker] = new_state
+        persist_alert_state(ticker, new_state)
 
     if to_alert and email_enabled:
-        if sender_email and sender_password and recipient_email:
-            ok, err = send_email_alert(
-                smtp_server, int(smtp_port), sender_email, sender_password,
-                recipient_email, to_alert
-            )
+        saved_email = (recipient_email or "").strip()
+        if saved_email:
+            ok, err = send_email_alert(saved_email, to_alert)
             if ok:
                 st.toast(f"📧 Email envoyé pour {len(to_alert)} mouvement(s)")
             else:
                 st.warning(f"Échec de l'envoi de l'email : {err}")
         else:
-            st.warning("Renseigne les champs email dans la barre latérale pour activer les alertes.")
+            st.warning("Enregistre d'abord ton adresse email dans la barre latérale.")
 
 results = st.session_state.last_results or []
 
@@ -743,7 +863,7 @@ else:
 
 st.divider()
 st.caption(
-    "⚠️ Le scan automatique fonctionne uniquement quand l'onglet Streamlit reste ouvert. "
-    "Pour une surveillance 24/7 réelle, il faut planifier ce script (cron, tâche planifiée, "
-    "ou un service cloud) en dehors de l'interface Streamlit."
+    "⚠️ La sauvegarde de l'adresse et de l'état des alertes est persistante via Supabase. "
+    "Le scan automatique de cette interface fonctionne uniquement lorsque l'application reste active. "
+    "Pour une surveillance 24/7 même lorsque l'application est fermée, il faut déployer un worker planifié séparé (par exemple GitHub Actions)."
 )
