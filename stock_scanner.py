@@ -208,7 +208,7 @@ def tr(fr, en):
     return en if IS_EN else fr
 
 st.title("📈 Stock Opportunity Scanner")
-st.caption(tr("Détection automatique des meilleurs moments d'achat sur ta watchlist premium", "Automatically detect potential buying opportunities in your premium watchlist"))
+st.caption(tr("Détection automatique des meilleurs moments d'achat sur ta watchlist", "Automatically detect potential buying opportunities in your watchlist"))
 
 # ============================================================
 # WATCHLIST
