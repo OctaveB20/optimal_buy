@@ -153,8 +153,18 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
+# ============================================================
+# LANGUE DE L'INTERFACE
+# ============================================================
+with st.sidebar:
+    app_language = st.selectbox("🌐 Language / Langue", ["Français", "English"], key="app_language")
+IS_EN = app_language == "English"
+def tr(fr, en):
+    return en if IS_EN else fr
+
 st.title("📈 Stock Opportunity Scanner")
-st.caption("Détection automatique des meilleurs moments d'achat sur ta watchlist premium")
+st.caption(tr("Détection automatique des meilleurs moments d'achat sur ta watchlist premium", "Automatically detect potential buying opportunities in your premium watchlist"))
 
 # ============================================================
 # WATCHLIST
@@ -460,7 +470,9 @@ BUCKET_LABELS = {
     "yellow": ("🟡", "À surveiller", "#eab308"),
     "red": ("🔴", "Rien à faire", "#ef4444"),
 }
-BUCKET_TEXT = {k: f"{v[0]} {v[1]}" for k, v in BUCKET_LABELS.items()}
+BUCKET_TEXT = ({
+    "green": "🟢 Potential buy", "yellow": "🟡 Watchlist", "red": "🔴 No action",
+} if IS_EN else {k: f"{v[0]} {v[1]}" for k, v in BUCKET_LABELS.items()})
 
 
 def _build_email_html(items: list[dict]) -> str:
@@ -637,16 +649,16 @@ def quick_read(r: dict):
 
     color, _ = score_bucket(r["score"])
     verdict = {
-        "green": "🟢 Configuration plutôt favorable à court terme",
-        "yellow": "🟡 Neutre : mieux vaut attendre une confirmation",
-        "red": "🔴 Peu favorable à court terme",
+        "green": tr("🟢 Configuration plutôt favorable à court terme", "🟢 Short-term setup looks favorable"),
+        "yellow": tr("🟡 Neutre : mieux vaut attendre une confirmation", "🟡 Neutral: wait for confirmation"),
+        "red": tr("🔴 Peu favorable à court terme", "🔴 Unfavorable in the short term"),
     }[color]
     return verdict, pos, neg
 
 
 CHAT_SYSTEM_PROMPT = (
     "Tu es un analyste actions pragmatique et honnête, intégré à un scanner d'opportunités d'achat. "
-    "Tu réponds en français, de façon concise et structurée. L'horizon est le COURT TERME (quelques jours à quelques semaines).\n"
+    "Réponds dans la langue demandée par l'instruction de langue ajoutée au contexte. Sois concis et structuré. L'horizon est le COURT TERME (quelques jours à quelques semaines).\n"
     "Règles :\n"
     "- Appuie-toi sur les données chiffrées fournies (indicateurs techniques et fondamentaux). N'invente aucun chiffre.\n"
     "- Si la recherche web est disponible, utilise-la pour les actualités récentes (résultats, annonces, catalyseurs) et cite-les brièvement ; sinon dis que tu n'as pas accès aux actualités.\n"
@@ -690,7 +702,12 @@ def ask_groq(r: dict, history: list, use_web: bool):
     while msgs and msgs[0]["role"] != "user":
         msgs.pop(0)
 
-    system = CHAT_SYSTEM_PROMPT + "\n\nDONNÉES DU TITRE SÉLECTIONNÉ :\n" + build_stock_context(r)
+    language_instruction = (
+        "Respond in English. Translate headings and explanations into natural English, while keeping ticker symbols and financial indicator names accurate."
+        if IS_EN else
+        "Réponds en français. Utilise des titres et explications naturels en français, en conservant les tickers et noms d'indicateurs financiers exacts."
+    )
+    system = CHAT_SYSTEM_PROMPT + "\n\n" + language_instruction + "\n\nSTOCK CONTEXT / DONNÉES DU TITRE SÉLECTIONNÉ :\n" + build_stock_context(r)
     if use_web:
         system += "\nLa recherche web est activée : utilise-la pour vérifier les actualités récentes pertinentes et cite brièvement les sources dans ta réponse."
     else:
@@ -724,45 +741,45 @@ def safe_md(text: str) -> str:
 # SIDEBAR - CONFIG EMAIL & SCAN
 # ============================================================
 with st.sidebar:
-    st.header("⚙️ Configuration")
+    st.header(tr("⚙️ Configuration", "⚙️ Settings"))
 
-    st.subheader("📬 Alertes email")
-    email_enabled = st.checkbox("Activer les alertes email", value=True)
+    st.subheader(tr("📬 Alertes email", "📬 Email alerts"))
+    email_enabled = st.checkbox(tr("Activer les alertes email", "Enable email alerts"), value=True)
     if "saved_recipient_email" not in st.session_state:
         st.session_state.saved_recipient_email = load_recipient_email()
     recipient_email = st.text_input(
-        "Email destinataire",
+        tr("Email destinataire", "Recipient email"),
         value=st.session_state.saved_recipient_email,
         placeholder="toi@example.com",
         key="recipient_email_input",
     )
-    if st.button("💾 Enregistrer mon email", use_container_width=True):
+    if st.button(tr("💾 Enregistrer mon email", "💾 Save my email"), use_container_width=True):
         email_to_save = recipient_email.strip()
         if "@" not in email_to_save or "." not in email_to_save.split("@")[-1]:
-            st.error("Entre une adresse email valide.")
+            st.error(tr("Entre une adresse email valide.", "Enter a valid email address."))
         else:
             ok, err = save_recipient_email(email_to_save)
             if ok:
                 st.session_state.saved_recipient_email = email_to_save
-                st.success("Adresse enregistrée dans Supabase. Tu n'auras plus à la saisir à chaque lancement.")
+                st.success(tr("Adresse enregistrée dans Supabase. Tu n'auras plus à la saisir à chaque lancement.", "Address saved to Supabase. You won't need to enter it each time."))
             else:
                 st.error(err)
     if not supabase:
-        st.warning("Supabase non connecté : configure SUPABASE_URL et SUPABASE_KEY dans les secrets.")
+        st.warning(tr("Supabase non connecté : configure SUPABASE_URL et SUPABASE_KEY dans les secrets.", "Supabase is not connected: configure SUPABASE_URL and SUPABASE_KEY in your secrets."))
     if not RESEND_API_KEY or not RESEND_FROM_EMAIL:
-        st.warning("Configure aussi Resend : RESEND_API_KEY et RESEND_FROM_EMAIL.")
+        st.warning(tr("Configure aussi Resend : RESEND_API_KEY et RESEND_FROM_EMAIL.", "Also configure Resend: RESEND_API_KEY and RESEND_FROM_EMAIL."))
     else:
-        st.caption(f"Expéditeur configuré : {RESEND_FROM_EMAIL}")
+        st.caption(tr(f"Expéditeur configuré : {RESEND_FROM_EMAIL}", f"Configured sender: {RESEND_FROM_EMAIL}"))
 
     st.divider()
-    st.subheader("🔔 Déclenchement des alertes")
+    st.subheader(tr("🔔 Déclenchement des alertes", "🔔 Alert triggers"))
     score_jump_threshold = st.slider(
-        "Hausse de score jugée significative (points)", 5, 40, 15,
-        help="Une alerte part si le score d'un titre augmente d'au moins ce nombre de points depuis la dernière alerte, même sans changer de catégorie."
+        tr("Hausse de score jugée significative (points)", "Significant score increase (points)"), 5, 40, 15,
+        help=tr("Une alerte part si le score d'un titre augmente d'au moins ce nombre de points depuis la dernière alerte, même sans changer de catégorie.", "An alert is sent if a stock's score rises by at least this many points since the previous alert, even if its category does not change.")
     )
     cooldown_minutes = st.slider(
-        "Délai minimum entre 2 alertes pour un même titre (minutes)", 15, 720, 120,
-        help="Empêche le spam si un score oscille autour d'une frontière de catégorie."
+        tr("Délai minimum entre 2 alertes pour un même titre (minutes)", "Minimum time between alerts for the same stock (minutes)"), 15, 720, 120,
+        help=tr("Empêche le spam si un score oscille autour d'une frontière de catégorie.", "Prevents spam when a score fluctuates around a category boundary.")
     )
     st.caption(
         "Une alerte est envoyée quand un titre **change de catégorie** "
@@ -771,27 +788,27 @@ with st.sidebar:
     )
 
     st.divider()
-    st.subheader("🎯 Seuils de score")
-    threshold_buy = st.slider("Seuil 'Achat potentiel' 🟢", 50, 100, 60)
-    threshold_watch = st.slider("Seuil 'À surveiller' 🟡", 30, threshold_buy - 1, 42)
+    st.subheader(tr("🎯 Seuils de score", "🎯 Score thresholds"))
+    threshold_buy = st.slider(tr("Seuil 'Achat potentiel' 🟢", "'Potential buy' threshold 🟢"), 50, 100, 60)
+    threshold_watch = st.slider(tr("Seuil 'À surveiller' 🟡", "'Watchlist' threshold 🟡"), 30, threshold_buy - 1, 42)
 
     st.divider()
-    st.subheader("🤖 Chatbot")
-    chat_web_search = st.checkbox("Autoriser la recherche web (actualités)", value=True,
-                                  help="Utilise l'outil browser_search de Groq pour les actualités récentes. Si la recherche échoue, le chatbot réessaie sans.")
+    st.subheader(tr("🤖 Chatbot", "🤖 Chatbot"))
+    chat_web_search = st.checkbox(tr("Autoriser la recherche web (actualités)", "Enable web search (news)"), value=True,
+                                  help=tr("Utilise l'outil browser_search de Groq pour les actualités récentes. Si la recherche échoue, le chatbot réessaie sans.", "Uses Groq's browser_search tool for recent news. If the search fails, the chatbot retries without it."))
     if not GROQ_API_KEY:
-        st.warning("Configure GROQ_API_KEY dans les secrets pour activer le chatbot.")
+        st.warning(tr("Configure GROQ_API_KEY dans les secrets pour activer le chatbot.", "Configure GROQ_API_KEY in your secrets to enable the chatbot."))
     else:
         st.caption(f"Modèle Groq : {GROQ_MODEL}")
 
     st.divider()
-    st.subheader("🔄 Scan automatique")
-    auto_scan = st.checkbox("Rafraîchissement automatique", value=False, disabled=not AUTOREFRESH_AVAILABLE)
+    st.subheader(tr("🔄 Scan automatique", "🔄 Automatic scan"))
+    auto_scan = st.checkbox(tr("Rafraîchissement automatique", "Automatic refresh"), value=False, disabled=not AUTOREFRESH_AVAILABLE)
     if not AUTOREFRESH_AVAILABLE:
-        st.caption("Installe `streamlit-autorefresh` pour activer le scan automatique en continu.")
-    interval_min = st.number_input("Intervalle (minutes)", min_value=5, max_value=180, value=30, step=5)
+        st.caption(tr("Installe `streamlit-autorefresh` pour activer le scan automatique en continu.", "Install `streamlit-autorefresh` to enable continuous automatic scanning."))
+    interval_min = st.number_input(tr("Intervalle (minutes)", "Interval (minutes)"), min_value=5, max_value=180, value=30, step=5)
 
-    scan_button = st.button("🔍 Scanner maintenant", type="primary", use_container_width=True)
+    scan_button = st.button(tr("🔍 Scanner maintenant", "🔍 Scan now"), type="primary", use_container_width=True)
 
 refresh_tick = 0
 if AUTOREFRESH_AVAILABLE and auto_scan:
@@ -922,10 +939,13 @@ def reset_filters():
         st.session_state[k] = v
 
 
-SORT_OPTIONS = {
+SORT_OPTIONS = ({
+    "Score": "score", "RSI": "rsi", "Drop from high": "drawdown_pct",
+    "Volume (ratio)": "vol_ratio", "Distance from SMA50": "pct_vs_sma50",
+} if IS_EN else {
     "Score": "score", "RSI": "rsi", "Baisse depuis le plus haut": "drawdown_pct",
     "Volume (ratio)": "vol_ratio", "Écart à la SMA50": "pct_vs_sma50",
-}
+})
 BUCKET_FILTER_LABELS = {BUCKET_TEXT["green"]: "green", BUCKET_TEXT["yellow"]: "yellow", BUCKET_TEXT["red"]: "red"}
 
 if results:
@@ -940,38 +960,38 @@ if results:
     c4.metric("🔴 Rien à faire", n_red)
 
     if st.session_state.last_scan_time:
-        st.caption(f"Dernier scan : {st.session_state.last_scan_time.strftime('%d/%m/%Y %H:%M:%S')}")
+        st.caption(tr(f"Dernier scan : {st.session_state.last_scan_time.strftime('%d/%m/%Y %H:%M:%S')}", f"Last scan: {st.session_state.last_scan_time.strftime('%Y-%m-%d %H:%M:%S')}"))
 
     df_results = pd.DataFrame(results).sort_values("score", ascending=False).reset_index(drop=True)
     df_results["bucket"] = df_results["score"].apply(lambda sc: score_bucket(sc)[0])
     categories = sorted(df_results["category"].unique())
 
-    tab_overview, tab_chat = st.tabs(["📋 Vue d'ensemble", "🤖 Chatbot"])
+    tab_overview, tab_chat = st.tabs([tr("📋 Vue d'ensemble", "📋 Overview"), tr("🤖 Chatbot", "🤖 Chatbot")])
 
     # ---------------- VUE D'ENSEMBLE + RECHERCHE PAR CRITÈRE ----------------
     with tab_overview:
-        with st.expander("🔎 Recherche & filtres", expanded=True):
+        with st.expander(tr("🔎 Recherche & filtres", "🔎 Search & filters"), expanded=True):
             f1, f2, f3 = st.columns(3)
-            f1.text_input("Recherche (ticker ou nom)", key="flt_search", placeholder="ex : NVDA, Palantir...")
-            f2.multiselect("Catégorie", categories, key="flt_cat")
-            f3.multiselect("Statut", list(BUCKET_FILTER_LABELS.keys()), key="flt_bucket")
+            f1.text_input(tr("Recherche (ticker ou nom)", "Search (ticker or name)"), key="flt_search", placeholder="e.g. NVDA, Palantir...")
+            f2.multiselect(tr("Catégorie", "Category"), categories, key="flt_cat")
+            f3.multiselect(tr("Statut", "Status"), list(BUCKET_FILTER_LABELS.keys()), key="flt_bucket")
 
             g1, g2, g3, g4 = st.columns(4)
-            g1.slider("Score minimum", 0, 100, key="flt_score")
-            g2.slider("RSI maximum", 0, 100, key="flt_rsi", help="Ex : 35 pour ne garder que les titres en zone de survente.")
-            g3.slider("Baisse minimale depuis le plus haut (%)", 0, 60, key="flt_dd")
-            g4.slider("Volume minimum (x moyenne 20j)", 0.0, 3.0, step=0.1, key="flt_vol")
+            g1.slider(tr("Score minimum", "Minimum score"), 0, 100, key="flt_score")
+            g2.slider(tr("RSI maximum", "Maximum RSI"), 0, 100, key="flt_rsi", help=tr("Ex : 35 pour ne garder que les titres en zone de survente.", "Example: 35 to show only stocks in oversold territory."))
+            g3.slider(tr("Baisse minimale depuis le plus haut (%)", "Minimum drop from high (%)"), 0, 60, key="flt_dd")
+            g4.slider(tr("Volume minimum (x moyenne 20j)", "Minimum volume (x 20-day average)"), 0.0, 3.0, step=0.1, key="flt_vol")
 
             h1, h2, h3, h4 = st.columns(4)
-            h1.checkbox("MACD haussier", key="flt_macd")
-            h2.checkbox("Au-dessus de la SMA50", key="flt_sma")
-            h3.checkbox("Rentable (marge nette > 0)", key="flt_profit")
-            h4.checkbox("RSI en rebond", key="flt_rebound", help="RSI passé sous 40 récemment et qui remonte.")
+            h1.checkbox(tr("MACD haussier", "Bullish MACD"), key="flt_macd")
+            h2.checkbox(tr("Au-dessus de la SMA50", "Above SMA50"), key="flt_sma")
+            h3.checkbox(tr("Rentable (marge nette > 0)", "Profitable (net margin > 0)"), key="flt_profit")
+            h4.checkbox(tr("RSI en rebond", "RSI rebounding"), key="flt_rebound", help=tr("RSI passé sous 40 récemment et qui remonte.", "RSI recently fell below 40 and is now rising."))
 
             s1, s2, s3 = st.columns([2, 2, 1])
-            s1.selectbox("Trier par", list(SORT_OPTIONS.keys()), key="flt_sort")
-            s2.radio("Ordre", ["Décroissant", "Croissant"], horizontal=True, key="flt_order")
-            s3.button("↺ Réinitialiser", on_click=reset_filters, use_container_width=True)
+            s1.selectbox(tr("Trier par", "Sort by"), list(SORT_OPTIONS.keys()), key="flt_sort")
+            s2.radio(tr("Ordre", "Order"), ["Décroissant", "Croissant"] if not IS_EN else ["Descending", "Ascending"], horizontal=True, key="flt_order")
+            s3.button(tr("↺ Réinitialiser", "↺ Reset"), on_click=reset_filters, use_container_width=True)
 
         fdf = df_results.copy()
         q = st.session_state.flt_search.strip().lower()
@@ -994,11 +1014,11 @@ if results:
         if st.session_state.flt_rebound:
             fdf = fdf[fdf["rsi_turn_score"] > 0]
         fdf = fdf.sort_values(SORT_OPTIONS[st.session_state.flt_sort],
-                              ascending=(st.session_state.flt_order == "Croissant"))
+                              ascending=(st.session_state.flt_order == ("Ascending" if IS_EN else "Croissant")))
 
-        st.caption(f"{len(fdf)} résultat(s) sur {len(df_results)}")
+        st.caption(tr(f"{len(fdf)} résultat(s) sur {len(df_results)}", f"{len(fdf)} result(s) out of {len(df_results)}"))
         if fdf.empty:
-            st.info("Aucune action ne correspond à ces critères. Assouplis un filtre ou clique sur Réinitialiser.")
+            st.info(tr("Aucune action ne correspond à ces critères. Assouplis un filtre ou clique sur Réinitialiser.", "No stocks match these criteria. Loosen a filter or click Reset."))
         for _, r in fdf.iterrows():
             color, label = score_bucket(r["score"])
             cols = st.columns([3, 1, 1, 1, 1, 1])
@@ -1012,38 +1032,38 @@ if results:
 
     # ---------------- CHATBOT ----------------
     with tab_chat:
-        st.markdown("Choisis une action pour obtenir une lecture rapide, puis lance l'analyse court terme ou pose tes questions.")
+        st.markdown(tr("Choisis une action pour obtenir une lecture rapide, puis lance l'analyse court terme ou pose tes questions.", "Choose a stock for a quick read, then run a short-term analysis or ask questions."))
         labels = {t: f"{t} — {n} ({sc:.1f}/100)" for t, n, sc in zip(df_results["ticker"], df_results["name"], df_results["score"])}
-        selected = st.selectbox("Action", df_results["ticker"].tolist(), format_func=lambda t: labels[t], key="chat_ticker")
+        selected = st.selectbox(tr("Action", "Stock"), df_results["ticker"].tolist(), format_func=lambda t: labels[t], key="chat_ticker")
         r = df_results[df_results["ticker"] == selected].iloc[0].to_dict()
         color, label = score_bucket(r["score"])
 
         m1, m2, m3, m4, m5 = st.columns(5)
-        m1.metric("Score", f"{r['score']:.1f}/100")
-        m2.metric("Statut", label)
-        m3.metric("Prix", f"{r['price']:.2f}")
+        m1.metric(tr("Score", "Score"), f"{r['score']:.1f}/100")
+        m2.metric(tr("Statut", "Status"), label)
+        m3.metric(tr("Prix", "Price"), f"{r['price']:.2f}")
         m4.metric("RSI", f"{r['rsi']:.0f}")
-        m5.metric("Baisse / plus haut", f"{r['drawdown_pct']:.1f}%")
+        m5.metric(tr("Baisse / plus haut", "Drop from high"), f"{r['drawdown_pct']:.1f}%")
 
         verdict, pos, neg = quick_read(r)
-        with st.expander(f"Lecture rapide (règles) — {verdict}", expanded=True):
+        with st.expander(tr(f"Lecture rapide (règles) — {verdict}", f"Quick read (rules) — {verdict}"), expanded=True):
             p_col, n_col = st.columns(2)
             with p_col:
-                st.markdown("**✅ Points favorables**")
-                for item in pos or ["Aucun signal favorable marqué"]:
+                st.markdown(tr("**✅ Points favorables**", "**✅ Positive signals**"))
+                for item in pos or [tr("Aucun signal favorable marqué", "No strong positive signal")]:
                     st.markdown(f"- {item}")
             with n_col:
-                st.markdown("**⚠️ Points de vigilance**")
-                for item in neg or ["Aucun signal défavorable marqué"]:
+                st.markdown(tr("**⚠️ Points de vigilance**", "**⚠️ Watch-outs**"))
+                for item in neg or [tr("Aucun signal défavorable marqué", "No strong negative signal")]:
                     st.markdown(f"- {item}")
 
         histories = st.session_state.setdefault("chat_histories", {})
         history = histories.setdefault(selected, [])
 
         b1, b2, _sp = st.columns([2, 2, 4])
-        analyze_clicked = b1.button("🧠 Analyse court terme", key=f"analyze_{selected}",
+        analyze_clicked = b1.button(tr("🧠 Analyse court terme", "🧠 Short-term analysis"), key=f"analyze_{selected}",
                                     disabled=not GROQ_API_KEY, use_container_width=True)
-        if b2.button("🗑️ Effacer la conversation", key=f"clear_{selected}", use_container_width=True):
+        if b2.button(tr("🗑️ Effacer la conversation", "🗑️ Clear conversation"), key=f"clear_{selected}", use_container_width=True):
             histories[selected] = []
             st.rerun()
 
@@ -1052,13 +1072,16 @@ if results:
                 st.markdown(safe_md(msg["content"]))
 
         user_prompt = st.chat_input(
-            f"Pose une question sur {selected}..." if GROQ_API_KEY else "Chatbot indisponible : GROQ_API_KEY manquante",
+            (tr(f"Pose une question sur {selected}...", f"Ask a question about {selected}...") if GROQ_API_KEY else tr("Chatbot indisponible : GROQ_API_KEY manquante", "Chatbot unavailable: GROQ_API_KEY is missing")),
             disabled=not GROQ_API_KEY, key="chat_input_box",
         )
         pending = None
         if analyze_clicked:
-            pending = (f"Donne-moi ton analyse court terme de {selected} : est-ce une bonne idée d'acheter maintenant ? "
-                       "Explique pourquoi, les risques et ce qu'il faut surveiller.")
+            pending = (
+                f"Give me a short-term analysis of {selected}: is it a good idea to buy now? Explain why, the risks, and what to watch."
+                if IS_EN else
+                f"Donne-moi ton analyse court terme de {selected} : est-ce une bonne idée d'acheter maintenant ? Explique pourquoi, les risques et ce qu'il faut surveiller."
+            )
         if user_prompt:
             pending = user_prompt
 
@@ -1067,7 +1090,7 @@ if results:
             with st.chat_message("user"):
                 st.markdown(safe_md(pending))
             with st.chat_message("assistant"):
-                with st.spinner("Analyse en cours..."):
+                with st.spinner(tr("Analyse en cours...", "Analyzing...")):
                     answer, err = ask_groq(r, history, chat_web_search)
                 if answer:
                     st.markdown(safe_md(answer))
@@ -1076,12 +1099,15 @@ if results:
                     st.error(err)
                     history.pop()
 else:
-    st.info("Clique sur **Scanner maintenant** dans la barre latérale pour lancer la première analyse.")
+    st.info(tr("Clique sur **Scanner maintenant** dans la barre latérale pour lancer la première analyse.", "Click **Scan now** in the sidebar to run your first analysis."))
 
 st.divider()
-st.caption(
+st.caption(tr(
     "⚠️ La sauvegarde de l'adresse et de l'état des alertes est persistante via Supabase. "
     "Le scan automatique de cette interface fonctionne uniquement lorsque l'application reste active. "
     "Pour une surveillance 24/7 même lorsque l'application est fermée, il faut déployer un worker planifié séparé (par exemple GitHub Actions). "
-    "Les analyses du chatbot sont informatives et ne constituent pas un conseil en investissement."
-)
+    "Les analyses du chatbot sont informatives et ne constituent pas un conseil en investissement.",
+    "⚠️ Email settings and alert states are stored persistently via Supabase. Automatic scanning works only while the app is active. "
+    "For 24/7 monitoring while the app is closed, deploy a separate scheduled worker (for example, GitHub Actions). "
+    "Chatbot analyses are for informational purposes and are not personalized investment advice."
+))
