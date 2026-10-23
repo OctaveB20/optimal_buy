@@ -33,6 +33,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 import os
+import re
 import requests
 from supabase import create_client
 
@@ -124,63 +125,75 @@ def persist_alert_state(ticker, state):
 
 st.markdown("""
 <style>
-    /* Accessible, light dashboard: avoid forcing a dark color scheme. */
     :root { color-scheme: light; }
     .stApp {
-        background: radial-gradient(ellipse at 12% 0%, rgba(59,130,246,.07), transparent 34%), #f6f8fc;
-        color: #172033;
+        background: radial-gradient(ellipse at 8% 0%, rgba(99,102,241,.075), transparent 34%),
+                    radial-gradient(ellipse at 95% 8%, rgba(14,165,233,.055), transparent 30%), #f7f9fc;
+        color: #182338;
     }
-    .block-container { padding-top: 1.25rem; padding-bottom: 3rem; max-width: 1500px; }
-    [data-testid="stHeader"] { background: rgba(246,248,252,.92); }
-    [data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #e4e9f2; }
-    [data-testid="stSidebar"] * { color: #253047; }
-    h1 { letter-spacing: -.04em; font-weight: 800 !important; color: #111827; }
-    h2, h3 { letter-spacing: -.025em; color: #172033; }
-    p, label, [data-testid="stMarkdownContainer"] { color: #273449; }
+    .block-container { padding-top: 1.6rem; padding-bottom: 3.5rem; max-width: 1480px; }
+    [data-testid="stHeader"] { background: rgba(247,249,252,.88); backdrop-filter: blur(12px); }
+    [data-testid="stSidebar"] { background: rgba(255,255,255,.94); border-right: 1px solid #e7ebf3; }
+    [data-testid="stSidebar"] * { color: #26344b; }
+    h1 { letter-spacing: -.045em; font-weight: 820 !important; color: #111827; }
+    h2, h3 { letter-spacing: -.03em; color: #172033; font-weight: 730 !important; }
+    p, label, [data-testid="stMarkdownContainer"] { color: #344258; }
+    [data-testid="stCaptionContainer"] { color: #748198; }
     [data-testid="stMetric"] {
-        background: linear-gradient(145deg,#ffffff,#f8faff); border: 1px solid #e1e7f0;
-        padding: 15px 17px; border-radius: 16px; box-shadow: 0 5px 18px rgba(26,43,75,.045);
+        background: linear-gradient(145deg, #fff, #f9fbff); border: 1px solid #e5eaf3;
+        padding: 16px 17px; border-radius: 18px; box-shadow: 0 5px 18px rgba(24,39,75,.035);
+        transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
     }
-    [data-testid="stMetricLabel"] { color: #64748b !important; }
-    [data-testid="stMetricValue"] { color: #111827 !important; font-weight: 750; letter-spacing: -.035em; }
-    [data-testid="stTabs"] button { border-radius: 10px 10px 0 0; padding-top: .65rem; padding-bottom: .65rem; }
-    [data-testid="stExpander"] { border: 1px solid #e1e7f0; border-radius: 14px; background: #ffffff; }
-    [data-testid="stVerticalBlockBorderWrapper"] { border-color: #e1e7f0 !important; border-radius: 16px !important; background: rgba(255,255,255,.92); }
-    div.stButton > button {
-        border-radius: 10px; border: 1px solid #d7dfeb; transition: all .16s ease;
-        min-height: 2.55rem; font-weight: 600;
+    [data-testid="stMetric"]:hover { transform: translateY(-2px); border-color: #d3def0; box-shadow: 0 10px 24px rgba(24,39,75,.065); }
+    [data-testid="stMetricLabel"] { color: #728097 !important; }
+    [data-testid="stMetricValue"] { color: #111827 !important; font-weight: 780; letter-spacing: -.04em; }
+    [data-testid="stTabs"] [role="tablist"] { gap: 7px; border-bottom: 1px solid #e5eaf3; }
+    [data-testid="stTabs"] button { border-radius: 11px 11px 0 0; padding: .75rem 1rem; transition: background .18s ease, color .18s ease; }
+    [data-testid="stTabs"] button[aria-selected="true"] { background: rgba(59,130,246,.075); color: #1d4ed8; }
+    [data-testid="stExpander"] { border: 1px solid #e5eaf3; border-radius: 16px; background: rgba(255,255,255,.9); overflow: hidden; }
+    [data-testid="stVerticalBlockBorderWrapper"] { border-color: #e5eaf3 !important; border-radius: 18px !important; background: rgba(255,255,255,.9); }
+    div.stButton > button, [data-testid="stFormSubmitButton"] button {
+        border-radius: 12px; border: 1px solid #dce4f0; transition: all .18s ease;
+        min-height: 2.6rem; font-weight: 650; box-shadow: 0 2px 5px rgba(24,39,75,.025);
     }
-    div.stButton > button:hover { border-color: #7aa7ef; color: #1d4ed8; transform: translateY(-1px); }
+    div.stButton > button:hover, [data-testid="stFormSubmitButton"] button:hover {
+        border-color: #9bb9ee; color: #1d4ed8; transform: translateY(-1px); box-shadow: 0 5px 13px rgba(37,99,235,.09);
+    }
     [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
-    [data-testid="stSelectbox"] [role="combobox"], [data-testid="stMultiSelect"] [role="combobox"] {
-        border-radius: 10px;
+    [data-testid="stSelectbox"] [role="combobox"], [data-testid="stMultiSelect"] [role="combobox"] { border-radius: 12px; }
+    [data-testid="stChatMessage"] {
+        border: 1px solid #e7ecf4; border-radius: 18px; padding: 1rem 1.1rem; margin: .65rem 0;
+        background: rgba(255,255,255,.9); box-shadow: 0 4px 14px rgba(24,39,75,.025);
     }
+    [data-testid="stChatInput"] { border-radius: 16px; }
     .score-badge { display:inline-flex; align-items:center; justify-content:center; padding:5px 11px; border-radius:999px; font-weight:750; font-size:.82rem; white-space:nowrap; }
     .badge-green { background:#dcfce7; color:#166534; border:1px solid #bbf7d0; }
     .badge-yellow { background:#fef3c7; color:#92400e; border:1px solid #fde68a; }
     .badge-red { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
     .stock-card {
-        background: linear-gradient(135deg,#ffffff,#f9fbff); border:1px solid #e3e9f2;
-        border-radius:16px; padding:17px 19px 13px; margin:8px 0 7px;
-        box-shadow:0 5px 18px rgba(26,43,75,.045); transition:border-color .16s ease, box-shadow .16s ease;
+        background: linear-gradient(135deg, #fff, #f9fbff); border:1px solid #e5eaf3; border-radius:18px;
+        padding:19px 20px 14px; margin:10px 0 8px; box-shadow:0 5px 18px rgba(24,39,75,.035);
+        transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
     }
-    .stock-card:hover { border-color:#b8cbea; box-shadow:0 8px 24px rgba(26,43,75,.075); }
-    .stock-card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
-    .stock-ticker { font-size:1.08rem; font-weight:800; color:#172033; letter-spacing:-.02em; }
-    .stock-company { font-size:.84rem; color:#64748b; margin-top:2px; }
+    .stock-card:hover { transform:translateY(-2px); border-color:#c7d7f0; box-shadow:0 12px 28px rgba(24,39,75,.075); }
+    .stock-card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:14px; }
+    .stock-ticker { font-size:1.08rem; font-weight:800; color:#172033; letter-spacing:-.025em; }
+    .stock-company { font-size:.84rem; color:#748198; margin-top:3px; }
     .stock-meta { display:flex; flex-wrap:wrap; gap:7px; margin-top:8px; }
-    .stock-chip { background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; border-radius:7px; padding:4px 8px; font-size:.75rem; }
-    .stock-bars { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
-    .stock-bar-label { display:flex; justify-content:space-between; gap:8px; color:#64748b; font-size:.76rem; margin-bottom:6px; }
-    .stock-track { height:7px; border-radius:99px; background:#e8edf5; overflow:hidden; }
+    .stock-chip { background:#f3f6fb; color:#4b5b73; border:1px solid #e6ebf3; border-radius:9px; padding:4px 9px; font-size:.75rem; }
+    .stock-bars { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; }
+    .stock-bar-label { display:flex; justify-content:space-between; gap:8px; color:#748198; font-size:.76rem; margin-bottom:7px; }
+    .stock-track { height:7px; border-radius:99px; background:#e9eef6; overflow:hidden; }
     .stock-fill { height:100%; border-radius:99px; }
-    .stock-foot { display:flex; flex-wrap:wrap; gap:16px; color:#64748b; font-size:.78rem; margin-top:13px; padding-top:10px; border-top:1px solid #e8edf5; }
-    .detail-row { display:grid; grid-template-columns:minmax(140px,1.2fr) minmax(100px,2fr) 65px; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid #edf1f7; }
+    .stock-foot { display:flex; flex-wrap:wrap; gap:16px; color:#748198; font-size:.78rem; margin-top:14px; padding-top:11px; border-top:1px solid #edf1f7; }
+    .detail-row { display:grid; grid-template-columns:minmax(140px,1.2fr) minmax(100px,2fr) 65px; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid #edf1f7; }
     .detail-label { color:#475569; font-size:.86rem; }
-    .detail-track { height:8px; background:#e8edf5; border-radius:99px; overflow:hidden; }
+    .detail-track { height:8px; background:#e9eef6; border-radius:99px; overflow:hidden; }
     .detail-value { text-align:right; color:#172033; font-size:.83rem; font-variant-numeric:tabular-nums; }
-    .section-kicker { color:#64748b; text-transform:uppercase; letter-spacing:.12em; font-size:.7rem; font-weight:750; }
-    @media (max-width: 700px) { .stock-bars { grid-template-columns:1fr; gap:9px; } .stock-card { padding:14px; } .detail-row { grid-template-columns:minmax(105px,1fr) minmax(70px,1fr) 55px; gap:8px; } }
+    .section-kicker { color:#748198; text-transform:uppercase; letter-spacing:.12em; font-size:.7rem; font-weight:750; }
+    [data-testid="stLineChart"], [data-testid="stPlotlyChart"] { border:1px solid #e5eaf3; border-radius:18px; padding:7px; background:rgba(255,255,255,.9); }
+    hr { border-color:#e6ebf3; }
+    @media (max-width:700px) { .block-container {padding-top:1rem;} .stock-bars {grid-template-columns:1fr;gap:10px;} .stock-card {padding:15px;} .detail-row {grid-template-columns:minmax(105px,1fr) minmax(70px,1fr) 55px;gap:8px;} }
 </style>
 """, unsafe_allow_html=True)
 
@@ -763,8 +776,8 @@ def render_stock_details(r: dict):
     for idx, (metric_name, metric_value) in enumerate(metrics):
         with metric_cols[idx % 2]:
             st.markdown(
-                f"<div style='display:flex;justify-content:space-between;gap:12px;padding:10px 12px;margin:0 0 8px;border:1px solid #263244;border-radius:10px;background:rgba(24,33,47,.55)'>"
-                f"<span style='color:#9eacc0;font-size:.82rem'>{metric_name}</span><strong style='color:#172033;font-size:.86rem;text-align:right'>{metric_value}</strong></div>",
+                f"<div style='display:flex;justify-content:space-between;gap:12px;padding:10px 12px;margin:0 0 8px;border:1px solid #e5eaf3;border-radius:12px;background:linear-gradient(145deg,#ffffff,#f8faff)'>"
+                f"<span style='color:#64748b;font-size:.82rem'>{metric_name}</span><strong style='color:#172033;font-size:.86rem;text-align:right'>{metric_value}</strong></div>",
                 unsafe_allow_html=True,
             )
     st.caption(tr("Les données indisponibles sont affichées N/A et reçoivent un score fondamental neutre dans le modèle.", "Unavailable data is shown as N/A and receives a neutral fundamental score in this model."))
@@ -776,6 +789,7 @@ CHAT_SYSTEM_PROMPT = (
     "Règles :\n"
     "- Appuie-toi sur les données chiffrées fournies (indicateurs techniques et fondamentaux). N'invente aucun chiffre.\n"
     "- Si la recherche web est disponible, utilise-la pour les actualités récentes (résultats, annonces, catalyseurs) et cite-les brièvement ; sinon dis que tu n'as pas accès aux actualités.\n"
+    "- N’utilise pas de tableaux Markdown : présente les données en listes à puces courtes, avec les chiffres importants en gras. "
     "- Pour une analyse complète, utilise ce plan : **Verdict court terme** (Favorable / Neutre / Défavorable, une phrase), "
     "**Pourquoi** (3 à 5 points chiffrés), **Risques**, **Ce qu'il faut surveiller** (niveaux ou signaux qui confirmeraient ou invalideraient le scénario).\n"
     "- Explique le sens des indicateurs si c'est utile, sans jargon inutile. Signale les contradictions entre indicateurs.\n"
@@ -849,6 +863,43 @@ def ask_groq(r: dict, history: list, use_web: bool):
 def safe_md(text: str) -> str:
     """Évite que les '$' soient interprétés comme du LaTeX par Streamlit."""
     return text.replace("$", "\\$")
+
+
+def chat_display_text(text: str) -> str:
+    """Convertit les tableaux Markdown du modèle en listes lisibles."""
+    lines = text.splitlines()
+    output, table_rows = [], []
+
+    def flush_table(rows):
+        parsed = []
+        for line in rows:
+            cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+            if cells and all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in cells):
+                continue
+            if cells:
+                parsed.append(cells)
+        if not parsed:
+            return []
+        header = parsed[0]
+        result = []
+        for row in parsed[1:]:
+            if len(row) == len(header):
+                result.append("- " + " · ".join(f"**{header[i]} :** {value}" for i, value in enumerate(row) if value))
+            else:
+                result.append("- " + " · ".join(value for value in row if value))
+        return result or ["- " + " · ".join(parsed[0])]
+
+    for line in lines:
+        if line.strip().startswith("|") and line.strip().endswith("|"):
+            table_rows.append(line)
+        else:
+            if table_rows:
+                output.extend(flush_table(table_rows))
+                table_rows = []
+            output.append(line)
+    if table_rows:
+        output.extend(flush_table(table_rows))
+    return safe_md("\n".join(output))
 
 
 # ============================================================
@@ -1203,6 +1254,28 @@ if results:
         m4.metric("RSI", f"{r['rsi']:.0f}")
         m5.metric(tr("Baisse / plus haut", "Drop from high"), f"{r['drawdown_pct']:.1f}%")
 
+        # A real graph is always shown in the chatbot tab, independently of the model's text format.
+        with st.container(border=True):
+            st.markdown(tr("#### 📈 Évolution du cours", "#### 📈 Price history"))
+            price_history = fetch_history(selected)
+            if not price_history.empty and "Close" in price_history.columns:
+                price_series = price_history["Close"].dropna().tail(126)
+                if isinstance(price_series, pd.DataFrame):
+                    price_series = price_series.iloc[:, 0]
+                if len(price_series) > 1:
+                    chart_df = pd.DataFrame({tr("Cours", "Price"): pd.to_numeric(price_series, errors="coerce")}).dropna()
+                    st.line_chart(chart_df, height=260, use_container_width=True)
+                    first_price, last_price = float(chart_df.iloc[0, 0]), float(chart_df.iloc[-1, 0])
+                    change_pct = ((last_price / first_price) - 1) * 100 if first_price else 0
+                    st.caption(tr(
+                        f"Environ 6 mois de séances · variation sur la période affichée : {change_pct:+.1f}%. Les performances passées ne préjugent pas des performances futures.",
+                        f"About 6 months of trading sessions · change over the displayed period: {change_pct:+.1f}%. Past performance does not predict future results."
+                    ))
+                else:
+                    st.info(tr("Pas assez de données pour tracer le graphique.", "Not enough data to plot a chart."))
+            else:
+                st.info(tr("Historique de cours indisponible pour ce titre.", "Price history is unavailable for this ticker."))
+
         verdict, pos, neg = quick_read(r)
         with st.expander(tr(f"Lecture rapide (règles) — {verdict}", f"Quick read (rules) — {verdict}"), expanded=True):
             p_col, n_col = st.columns(2)
@@ -1227,7 +1300,7 @@ if results:
 
         for msg in history:
             with st.chat_message(msg["role"]):
-                st.markdown(safe_md(msg["content"]))
+                st.markdown(chat_display_text(msg["content"]))
 
         user_prompt = st.chat_input(
             (tr(f"Pose une question sur {selected}...", f"Ask a question about {selected}...") if GROQ_API_KEY else tr("Chatbot indisponible : GROQ_API_KEY manquante", "Chatbot unavailable: GROQ_API_KEY is missing")),
@@ -1246,12 +1319,12 @@ if results:
         if pending:
             history.append({"role": "user", "content": pending})
             with st.chat_message("user"):
-                st.markdown(safe_md(pending))
+                st.markdown(chat_display_text(pending))
             with st.chat_message("assistant"):
                 with st.spinner(tr("Analyse en cours...", "Analyzing...")):
                     answer, err = ask_groq(r, history, chat_web_search)
                 if answer:
-                    st.markdown(safe_md(answer))
+                    st.markdown(chat_display_text(answer))
                     history.append({"role": "assistant", "content": answer})
                 else:
                     st.error(err)
