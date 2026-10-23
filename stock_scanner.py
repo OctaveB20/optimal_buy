@@ -23,7 +23,7 @@ Lancement :
     streamlit run stock_scanner.py
 
 Configuration : secrets Streamlit SUPABASE_URL, SUPABASE_KEY, RESEND_API_KEY,
-RESEND_FROM_EMAIL.
+RESEND_FROM_EMAIL, ANTHROPIC_API_KEY (chatbot), ANTHROPIC_MODEL (optionnel).
 """
 
 from datetime import datetime, date
@@ -57,6 +57,8 @@ SUPABASE_URL = get_setting("SUPABASE_URL")
 SUPABASE_KEY = get_setting("SUPABASE_KEY")
 RESEND_API_KEY = get_setting("RESEND_API_KEY")
 RESEND_FROM_EMAIL = get_setting("RESEND_FROM_EMAIL")
+ANTHROPIC_API_KEY = get_setting("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL = get_setting("ANTHROPIC_MODEL", "claude-sonnet-5-5") or "claude-sonnet-5-5"
 
 @st.cache_resource
 def get_supabase_client():
@@ -570,6 +572,131 @@ def send_email_alert(recipient_email, items):
 
 
 # ============================================================
+# CHATBOT : lecture rapide (règles) + analyse via l'API Claude
+# ============================================================
+def _fmt_pct(v, digits=1):
+    return f"{v * 100:.{digits}f}%" if v is not None and pd.notna(v) else "N/A"
+
+
+def build_stock_context(r: dict) -> str:
+    """Résumé chiffré d'un titre, injecté dans le prompt du chatbot."""
+    return (
+        f"Ticker : {r['ticker']} ({r['name']}) - catégorie : {r['category']}\n"
+        f"Prix : {r['price']:.2f}\n"
+        f"Score global : {r['score']:.1f}/100 (seuil 'achat potentiel' {threshold_buy}, seuil 'à surveiller' {threshold_watch})\n"
+        f"- RSI(14) : {r['rsi']:.1f} | variation 3 jours : {r['rsi_delta3']:+.1f} | points {r['rsi_score']:.1f}/{MAX_RSI}\n"
+        f"- MACD histogramme : {r['macd_hist_pct']:+.2f}% du prix | pente 3 jours : {r['macd_slope_pct']:+.2f} | points {r['macd_score']:.1f}/{MAX_MACD}\n"
+        f"- Volume (3 derniers jours / moyenne 20j) : x{r['vol_ratio']:.2f} | points {r['vol_score']:.1f}/{MAX_VOL}\n"
+        f"- Baisse depuis le plus haut 6 mois : {r['drawdown_pct']:.1f}% | points {r['drawdown_score']:.1f}/{MAX_DRAWDOWN}\n"
+        f"- Écart à la SMA50 : {r['pct_vs_sma50']:+.1f}% | points {r['support_score']:.1f}/{MAX_SUPPORT}\n"
+        f"- Croissance CA (YoY) : {_fmt_pct(r['revenue_growth'])} | Marge brute : {_fmt_pct(r['gross_margin'])} "
+        f"| Marge nette : {_fmt_pct(r['profit_margin'])}\n"
+        f"- Points qualité : croissance {r['growth_score']:.1f}/{MAX_GROWTH}, marge brute {r['margin_score']:.1f}/{MAX_MARGIN}, "
+        f"marge nette {r['profit_score']:.1f}/{MAX_PROFIT} (N/A = score neutre)\n"
+        f"Données issues du dernier scan ({st.session_state.last_scan_time.strftime('%d/%m/%Y %H:%M') if st.session_state.last_scan_time else 'inconnu'})."
+    )
+
+
+def quick_read(r: dict):
+    """Lecture rapide par règles (sans IA) : verdict + points favorables / défavorables."""
+    pos, neg = [], []
+    if r["rsi"] < 35:
+        pos.append(f"RSI en zone de survente ({r['rsi']:.0f})")
+    elif r["rsi"] > 65:
+        neg.append(f"RSI élevé ({r['rsi']:.0f}) : le titre a déjà fortement monté à court terme")
+    if r["rsi_turn_score"] > 0 and r["rsi_delta3"] > 3:
+        pos.append(f"RSI qui rebondit (+{r['rsi_delta3']:.1f} pts en 3 jours) après être passé sous 40")
+    if r["macd_bullish"] and r["macd_slope_pct"] > 0:
+        pos.append("MACD positif et en accélération")
+    elif (not r["macd_bullish"]) and r["macd_slope_pct"] < 0:
+        neg.append("MACD négatif et en dégradation : momentum encore baissier")
+    if r["vol_score"] >= 4:
+        pos.append(f"Volume supérieur à la normale (x{r['vol_ratio']:.2f}) sur un titre qui ne baisse pas")
+    elif r["vol_ratio"] < 0.8:
+        neg.append(f"Volume faible (x{r['vol_ratio']:.2f}) : peu de conviction du marché")
+    if r["drawdown_pct"] >= 20:
+        pos.append(f"Décote de {r['drawdown_pct']:.0f}% par rapport au plus haut 6 mois")
+    elif r["drawdown_pct"] < 8:
+        neg.append(f"Peu de décote ({r['drawdown_pct']:.0f}%) : le point d'entrée n'est pas avantageux")
+    if -3 <= r["pct_vs_sma50"] <= 3:
+        pos.append("Proche de la SMA50 : zone d'entrée classique")
+    elif r["pct_vs_sma50"] > 12:
+        neg.append(f"Titre étendu ({r['pct_vs_sma50']:+.0f}% vs SMA50) : risque de repli")
+    elif r["pct_vs_sma50"] < -12:
+        neg.append(f"Nettement sous la SMA50 ({r['pct_vs_sma50']:+.0f}%) : tendance dégradée")
+    if pd.notna(r["revenue_growth"]):
+        if r["revenue_growth"] >= 0.15:
+            pos.append(f"Croissance du CA solide ({r['revenue_growth'] * 100:.0f}%)")
+        elif r["revenue_growth"] < 0:
+            neg.append(f"Chiffre d'affaires en baisse ({r['revenue_growth'] * 100:.0f}%)")
+    if pd.notna(r["profit_margin"]):
+        if r["profit_margin"] < 0:
+            neg.append(f"Entreprise non rentable (marge nette {r['profit_margin'] * 100:.0f}%) : titre plus risqué")
+        elif r["profit_margin"] >= 0.10:
+            pos.append(f"Rentable (marge nette {r['profit_margin'] * 100:.0f}%)")
+
+    color, _ = score_bucket(r["score"])
+    verdict = {
+        "green": "🟢 Configuration plutôt favorable à court terme",
+        "yellow": "🟡 Neutre : mieux vaut attendre une confirmation",
+        "red": "🔴 Peu favorable à court terme",
+    }[color]
+    return verdict, pos, neg
+
+
+CHAT_SYSTEM_PROMPT = (
+    "Tu es un analyste actions pragmatique et honnête, intégré à un scanner d'opportunités d'achat. "
+    "Tu réponds en français, de façon concise et structurée. L'horizon est le COURT TERME (quelques jours à quelques semaines).\n"
+    "Règles :\n"
+    "- Appuie-toi sur les données chiffrées fournies (indicateurs techniques et fondamentaux). N'invente aucun chiffre.\n"
+    "- Si la recherche web est disponible, utilise-la pour les actualités récentes (résultats, annonces, catalyseurs) et cite-les brièvement ; sinon dis que tu n'as pas accès aux actualités.\n"
+    "- Pour une analyse complète, utilise ce plan : **Verdict court terme** (Favorable / Neutre / Défavorable, une phrase), "
+    "**Pourquoi** (3 à 5 points chiffrés), **Risques**, **Ce qu'il faut surveiller** (niveaux ou signaux qui confirmeraient ou invalideraient le scénario).\n"
+    "- Explique le sens des indicateurs si c'est utile, sans jargon inutile. Signale les contradictions entre indicateurs.\n"
+    "- Les indicateurs techniques ne prédisent pas l'avenir : exprime ton niveau de confiance. Rappelle en une ligne en fin d'analyse "
+    "que ce n'est pas un conseil financier personnalisé.\n"
+    f"Date du jour : {date.today().strftime('%d/%m/%Y')}."
+)
+
+
+def _anthropic_request(system: str, messages: list, use_web: bool):
+    body = {"model": ANTHROPIC_MODEL, "max_tokens": 1500, "system": system, "messages": messages}
+    if use_web:
+        body["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}]
+    return requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
+        json=body, timeout=90,
+    )
+
+
+def ask_claude(r: dict, history: list, use_web: bool):
+    """Appelle l'API Claude avec le contexte du titre. Renvoie (texte, erreur)."""
+    if not ANTHROPIC_API_KEY:
+        return None, "Configure ANTHROPIC_API_KEY dans les secrets pour activer le chatbot."
+    msgs = [{"role": m["role"], "content": m["content"]} for m in history[-12:]]
+    while msgs and msgs[0]["role"] != "user":
+        msgs.pop(0)
+    system = CHAT_SYSTEM_PROMPT + "\n\nDONNÉES DU TITRE SÉLECTIONNÉ :\n" + build_stock_context(r)
+    try:
+        resp = _anthropic_request(system, msgs, use_web)
+        if not resp.ok and use_web:
+            resp = _anthropic_request(system, msgs, False)  # recherche web indisponible : on réessaie sans
+        if not resp.ok:
+            return None, f"API Claude HTTP {resp.status_code}: {resp.text[:400]}"
+        blocks = resp.json().get("content", [])
+        text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
+        return (text or None), (None if text else "Réponse vide de l'API.")
+    except Exception as exc:
+        return None, str(exc)
+
+
+def safe_md(text: str) -> str:
+    """Évite que les '$' soient interprétés comme du LaTeX par Streamlit."""
+    return text.replace("$", "\\$")
+
+
+# ============================================================
 # SIDEBAR - CONFIG EMAIL & SCAN
 # ============================================================
 with st.sidebar:
@@ -625,6 +752,15 @@ with st.sidebar:
     threshold_watch = st.slider("Seuil 'À surveiller' 🟡", 30, threshold_buy - 1, 42)
 
     st.divider()
+    st.subheader("🤖 Chatbot")
+    chat_web_search = st.checkbox("Autoriser la recherche web (actualités)", value=True,
+                                  help="Permet au chatbot de chercher les actualités récentes du titre. Si l'option n'est pas activée sur ton compte API, il répond sans.")
+    if not ANTHROPIC_API_KEY:
+        st.warning("Configure ANTHROPIC_API_KEY dans les secrets pour activer le chatbot.")
+    else:
+        st.caption(f"Modèle : {ANTHROPIC_MODEL}")
+
+    st.divider()
     st.subheader("🔄 Scan automatique")
     auto_scan = st.checkbox("Rafraîchissement automatique", value=False, disabled=not AUTOREFRESH_AVAILABLE)
     if not AUTOREFRESH_AVAILABLE:
@@ -633,8 +769,9 @@ with st.sidebar:
 
     scan_button = st.button("🔍 Scanner maintenant", type="primary", use_container_width=True)
 
+refresh_tick = 0
 if AUTOREFRESH_AVAILABLE and auto_scan:
-    st_autorefresh(interval=int(interval_min) * 60 * 1000, key="auto_scanner_refresh")
+    refresh_tick = st_autorefresh(interval=int(interval_min) * 60 * 1000, key="auto_scanner_refresh")
 
 # ============================================================
 # ETAT SESSION
@@ -646,7 +783,11 @@ if "last_results" not in st.session_state:
 if "last_scan_time" not in st.session_state:
     st.session_state.last_scan_time = None
 
-should_scan = scan_button or (auto_scan and AUTOREFRESH_AVAILABLE) or st.session_state.last_results is None
+if "last_refresh_tick" not in st.session_state:
+    st.session_state.last_refresh_tick = refresh_tick
+auto_triggered = bool(auto_scan and AUTOREFRESH_AVAILABLE and refresh_tick != st.session_state.last_refresh_tick)
+st.session_state.last_refresh_tick = refresh_tick
+should_scan = scan_button or auto_triggered or st.session_state.last_results is None
 
 
 def score_bucket(score):
@@ -658,24 +799,6 @@ def score_bucket(score):
 
 
 BUCKET_RANK = {"red": 0, "yellow": 1, "green": 2}
-
-
-def crit_class(points, max_points):
-    frac = points / max_points if max_points else 0
-    if frac >= 0.66:
-        return "crit-ok"
-    elif frac >= 0.33:
-        return "crit-mid"
-    return "crit-ko"
-
-
-def bar_color(points, max_points):
-    frac = points / max_points if max_points else 0
-    if frac >= 0.66:
-        return "#4ade80"
-    elif frac >= 0.33:
-        return "#facc15"
-    return "#ef4444"
 
 
 # ============================================================
@@ -761,6 +884,26 @@ results = st.session_state.last_results or []
 # ============================================================
 # HEADER RESUME
 # ============================================================
+FILTER_DEFAULTS = {
+    "flt_search": "", "flt_cat": [], "flt_bucket": [], "flt_score": 0, "flt_rsi": 100, "flt_dd": 0,
+    "flt_vol": 0.0, "flt_macd": False, "flt_sma": False, "flt_profit": False, "flt_rebound": False,
+    "flt_sort": "Score", "flt_order": "Décroissant",
+}
+for _k, _v in FILTER_DEFAULTS.items():
+    st.session_state.setdefault(_k, _v)
+
+
+def reset_filters():
+    for k, v in FILTER_DEFAULTS.items():
+        st.session_state[k] = v
+
+
+SORT_OPTIONS = {
+    "Score": "score", "RSI": "rsi", "Baisse depuis le plus haut": "drawdown_pct",
+    "Volume (ratio)": "vol_ratio", "Écart à la SMA50": "pct_vs_sma50",
+}
+BUCKET_FILTER_LABELS = {BUCKET_TEXT["green"]: "green", BUCKET_TEXT["yellow"]: "yellow", BUCKET_TEXT["red"]: "red"}
+
 if results:
     n_green = sum(1 for r in results if r["score"] >= threshold_buy)
     n_yellow = sum(1 for r in results if threshold_watch <= r["score"] < threshold_buy)
@@ -775,13 +918,64 @@ if results:
     if st.session_state.last_scan_time:
         st.caption(f"Dernier scan : {st.session_state.last_scan_time.strftime('%d/%m/%Y %H:%M:%S')}")
 
-    df_results = pd.DataFrame(results).sort_values("score", ascending=False)
-    categories = df_results["category"].unique()
+    df_results = pd.DataFrame(results).sort_values("score", ascending=False).reset_index(drop=True)
+    df_results["bucket"] = df_results["score"].apply(lambda sc: score_bucket(sc)[0])
+    categories = sorted(df_results["category"].unique())
 
-    tab_overview, tab_categories = st.tabs(["📋 Vue d'ensemble", "🗂️ Par catégorie"])
+    tab_overview, tab_chat = st.tabs(["📋 Vue d'ensemble", "🤖 Chatbot"])
 
+    # ---------------- VUE D'ENSEMBLE + RECHERCHE PAR CRITÈRE ----------------
     with tab_overview:
-        for _, r in df_results.iterrows():
+        with st.expander("🔎 Recherche & filtres", expanded=True):
+            f1, f2, f3 = st.columns(3)
+            f1.text_input("Recherche (ticker ou nom)", key="flt_search", placeholder="ex : NVDA, Palantir...")
+            f2.multiselect("Catégorie", categories, key="flt_cat")
+            f3.multiselect("Statut", list(BUCKET_FILTER_LABELS.keys()), key="flt_bucket")
+
+            g1, g2, g3, g4 = st.columns(4)
+            g1.slider("Score minimum", 0, 100, key="flt_score")
+            g2.slider("RSI maximum", 0, 100, key="flt_rsi", help="Ex : 35 pour ne garder que les titres en zone de survente.")
+            g3.slider("Baisse minimale depuis le plus haut (%)", 0, 60, key="flt_dd")
+            g4.slider("Volume minimum (x moyenne 20j)", 0.0, 3.0, step=0.1, key="flt_vol")
+
+            h1, h2, h3, h4 = st.columns(4)
+            h1.checkbox("MACD haussier", key="flt_macd")
+            h2.checkbox("Au-dessus de la SMA50", key="flt_sma")
+            h3.checkbox("Rentable (marge nette > 0)", key="flt_profit")
+            h4.checkbox("RSI en rebond", key="flt_rebound", help="RSI passé sous 40 récemment et qui remonte.")
+
+            s1, s2, s3 = st.columns([2, 2, 1])
+            s1.selectbox("Trier par", list(SORT_OPTIONS.keys()), key="flt_sort")
+            s2.radio("Ordre", ["Décroissant", "Croissant"], horizontal=True, key="flt_order")
+            s3.button("↺ Réinitialiser", on_click=reset_filters, use_container_width=True)
+
+        fdf = df_results.copy()
+        q = st.session_state.flt_search.strip().lower()
+        if q:
+            fdf = fdf[fdf["ticker"].str.lower().str.contains(q, regex=False) | fdf["name"].str.lower().str.contains(q, regex=False)]
+        if st.session_state.flt_cat:
+            fdf = fdf[fdf["category"].isin(st.session_state.flt_cat)]
+        if st.session_state.flt_bucket:
+            fdf = fdf[fdf["bucket"].isin([BUCKET_FILTER_LABELS[b] for b in st.session_state.flt_bucket])]
+        fdf = fdf[fdf["score"] >= st.session_state.flt_score]
+        fdf = fdf[fdf["rsi"] <= st.session_state.flt_rsi]
+        fdf = fdf[fdf["drawdown_pct"] >= st.session_state.flt_dd]
+        fdf = fdf[fdf["vol_ratio"] >= st.session_state.flt_vol]
+        if st.session_state.flt_macd:
+            fdf = fdf[fdf["macd_bullish"]]
+        if st.session_state.flt_sma:
+            fdf = fdf[fdf["above_support"]]
+        if st.session_state.flt_profit:
+            fdf = fdf[fdf["profit_margin"].notna() & (fdf["profit_margin"] > 0)]
+        if st.session_state.flt_rebound:
+            fdf = fdf[fdf["rsi_turn_score"] > 0]
+        fdf = fdf.sort_values(SORT_OPTIONS[st.session_state.flt_sort],
+                              ascending=(st.session_state.flt_order == "Croissant"))
+
+        st.caption(f"{len(fdf)} résultat(s) sur {len(df_results)}")
+        if fdf.empty:
+            st.info("Aucune action ne correspond à ces critères. Assouplis un filtre ou clique sur Réinitialiser.")
+        for _, r in fdf.iterrows():
             color, label = score_bucket(r["score"])
             cols = st.columns([3, 1, 1, 1, 1, 1])
             cols[0].markdown(f"**{r['ticker']}** — {r['name']}  \n<span style='color:#9aa0ab;font-size:0.8rem'>{r['category']}</span>", unsafe_allow_html=True)
@@ -792,57 +986,71 @@ if results:
             cols[5].markdown(label)
             st.divider()
 
-    with tab_categories:
-        for cat in sorted(categories):
-            st.markdown(f"<div class='section-title'>{cat}</div>", unsafe_allow_html=True)
-            cat_results = df_results[df_results["category"] == cat]
-            cols = st.columns(3)
-            for idx, (_, r) in enumerate(cat_results.iterrows()):
-                color, label = score_bucket(r["score"])
-                with cols[idx % 3]:
-                    def bar(points, max_points):
-                        pct = max(0, min(100, (points / max_points) * 100)) if max_points else 0
-                        col = bar_color(points, max_points)
-                        return f'<div class="bar-track"><div class="bar-fill" style="width:{pct:.0f}%; background:{col};"></div></div>'
+    # ---------------- CHATBOT ----------------
+    with tab_chat:
+        st.markdown("Choisis une action pour obtenir une lecture rapide, puis lance l'analyse court terme ou pose tes questions.")
+        labels = {t: f"{t} — {n} ({sc:.1f}/100)" for t, n, sc in zip(df_results["ticker"], df_results["name"], df_results["score"])}
+        selected = st.selectbox("Action", df_results["ticker"].tolist(), format_func=lambda t: labels[t], key="chat_ticker")
+        r = df_results[df_results["ticker"] == selected].iloc[0].to_dict()
+        color, label = score_bucket(r["score"])
 
-                    growth_label = f"Croissance CA {r['revenue_growth']*100:.1f}%" if pd.notna(r["revenue_growth"]) else "Croissance CA : N/A (neutre)"
-                    margin_label = f"Marge brute {r['gross_margin']*100:.1f}%" if pd.notna(r["gross_margin"]) else "Marge brute : N/A (neutre)"
-                    if pd.notna(r["profit_margin"]):
-                        profit_check = "✔" if r["profit_margin"] > 0 else "✘"
-                        profit_label = f"Rentable {profit_check} (marge nette {r['profit_margin']*100:.1f}%)"
-                    else:
-                        profit_label = "Rentable : N/A (neutre)"
+        m1, m2, m3, m4, m5 = st.columns(5)
+        m1.metric("Score", f"{r['score']:.1f}/100")
+        m2.metric("Statut", label)
+        m3.metric("Prix", f"{r['price']:.2f}")
+        m4.metric("RSI", f"{r['rsi']:.0f}")
+        m5.metric("Baisse / plus haut", f"{r['drawdown_pct']:.1f}%")
 
-                    rsi_arrow = "↗" if r["rsi_delta3"] > 0 else "↘"
-                    rsi_label = f"RSI {r['rsi']:.0f} ({rsi_arrow}{r['rsi_delta3']:+.1f} /3j)"
-                    macd_label = f"MACD {r['macd_hist_pct']:+.2f}% (pente {r['macd_slope_pct']:+.2f})"
+        verdict, pos, neg = quick_read(r)
+        with st.expander(f"Lecture rapide (règles) — {verdict}", expanded=True):
+            p_col, n_col = st.columns(2)
+            with p_col:
+                st.markdown("**✅ Points favorables**")
+                for item in pos or ["Aucun signal favorable marqué"]:
+                    st.markdown(f"- {item}")
+            with n_col:
+                st.markdown("**⚠️ Points de vigilance**")
+                for item in neg or ["Aucun signal défavorable marqué"]:
+                    st.markdown(f"- {item}")
 
-                    st.markdown(f"""
-                    <div class="card card-{color}">
-                        <div class="ticker-name">{r['ticker']} <span class="score-badge badge-{color}">{r['score']:.1f}/100</span></div>
-                        <div class="ticker-sub">{r['name']}</div>
-                        <div style="font-size:0.85rem; line-height:1.5;">
-                            <div class="crit-row"><span class="{crit_class(r['rsi_score'], MAX_RSI)}">{rsi_label}</span><span>{r['rsi_score']:.1f}/{MAX_RSI}</span></div>
-                            {bar(r['rsi_score'], MAX_RSI)}
-                            <div class="crit-row"><span class="{crit_class(r['macd_score'], MAX_MACD)}">{macd_label}</span><span>{r['macd_score']:.1f}/{MAX_MACD}</span></div>
-                            {bar(r['macd_score'], MAX_MACD)}
-                            <div class="crit-row"><span class="{crit_class(r['vol_score'], MAX_VOL)}">Volume x{r['vol_ratio']:.2f}</span><span>{r['vol_score']:.1f}/{MAX_VOL}</span></div>
-                            {bar(r['vol_score'], MAX_VOL)}
-                            <div class="crit-row"><span class="{crit_class(r['drawdown_score'], MAX_DRAWDOWN)}">Baisse {r['drawdown_pct']:.1f}%</span><span>{r['drawdown_score']:.1f}/{MAX_DRAWDOWN}</span></div>
-                            {bar(r['drawdown_score'], MAX_DRAWDOWN)}
-                            <div class="crit-row"><span class="{crit_class(r['support_score'], MAX_SUPPORT)}">Vs SMA50 {r['pct_vs_sma50']:+.1f}%</span><span>{r['support_score']:.1f}/{MAX_SUPPORT}</span></div>
-                            {bar(r['support_score'], MAX_SUPPORT)}
-                            <div style="margin-top:6px; padding-top:6px; border-top:1px dashed #2a2f3a; color:#9aa0ab; font-size:0.75rem;">Qualité (filtre)</div>
-                            <div class="crit-row"><span class="{crit_class(r['growth_score'], MAX_GROWTH)}">{growth_label}</span><span>{r['growth_score']:.1f}/{MAX_GROWTH}</span></div>
-                            {bar(r['growth_score'], MAX_GROWTH)}
-                            <div class="crit-row"><span class="{crit_class(r['margin_score'], MAX_MARGIN)}">{margin_label}</span><span>{r['margin_score']:.1f}/{MAX_MARGIN}</span></div>
-                            {bar(r['margin_score'], MAX_MARGIN)}
-                            <div class="crit-row"><span class="{crit_class(r['profit_score'], MAX_PROFIT)}">{profit_label}</span><span>{r['profit_score']:.1f}/{MAX_PROFIT}</span></div>
-                            {bar(r['profit_score'], MAX_PROFIT)}
-                            <b>Prix actuel : {r['price']:.2f}</b>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+        histories = st.session_state.setdefault("chat_histories", {})
+        history = histories.setdefault(selected, [])
+
+        b1, b2, _sp = st.columns([2, 2, 4])
+        analyze_clicked = b1.button("🧠 Analyse court terme", key=f"analyze_{selected}",
+                                    disabled=not ANTHROPIC_API_KEY, use_container_width=True)
+        if b2.button("🗑️ Effacer la conversation", key=f"clear_{selected}", use_container_width=True):
+            histories[selected] = []
+            st.rerun()
+
+        for msg in history:
+            with st.chat_message(msg["role"]):
+                st.markdown(safe_md(msg["content"]))
+
+        user_prompt = st.chat_input(
+            f"Pose une question sur {selected}..." if ANTHROPIC_API_KEY else "Chatbot indisponible : ANTHROPIC_API_KEY manquante",
+            disabled=not ANTHROPIC_API_KEY, key="chat_input_box",
+        )
+        pending = None
+        if analyze_clicked:
+            pending = (f"Donne-moi ton analyse court terme de {selected} : est-ce une bonne idée d'acheter maintenant ? "
+                       "Explique pourquoi, les risques et ce qu'il faut surveiller.")
+        if user_prompt:
+            pending = user_prompt
+
+        if pending:
+            history.append({"role": "user", "content": pending})
+            with st.chat_message("user"):
+                st.markdown(safe_md(pending))
+            with st.chat_message("assistant"):
+                with st.spinner("Analyse en cours..."):
+                    answer, err = ask_claude(r, history, chat_web_search)
+                if answer:
+                    st.markdown(safe_md(answer))
+                    history.append({"role": "assistant", "content": answer})
+                else:
+                    st.error(err)
+                    history.pop()
 else:
     st.info("Clique sur **Scanner maintenant** dans la barre latérale pour lancer la première analyse.")
 
@@ -850,5 +1058,6 @@ st.divider()
 st.caption(
     "⚠️ La sauvegarde de l'adresse et de l'état des alertes est persistante via Supabase. "
     "Le scan automatique de cette interface fonctionne uniquement lorsque l'application reste active. "
-    "Pour une surveillance 24/7 même lorsque l'application est fermée, il faut déployer un worker planifié séparé (par exemple GitHub Actions)."
+    "Pour une surveillance 24/7 même lorsque l'application est fermée, il faut déployer un worker planifié séparé (par exemple GitHub Actions). "
+    "Les analyses du chatbot sont informatives et ne constituent pas un conseil en investissement."
 )
