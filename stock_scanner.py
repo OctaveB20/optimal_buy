@@ -610,42 +610,42 @@ def build_stock_context(r: dict) -> str:
 
 
 def quick_read(r: dict):
-    """Lecture rapide par règles (sans IA) : verdict + points favorables / défavorables."""
+    """Rule-based quick read; all explanatory text follows the selected UI language."""
     pos, neg = [], []
     if r["rsi"] < 35:
-        pos.append(f"RSI en zone de survente ({r['rsi']:.0f})")
+        pos.append(tr(f"RSI en zone de survente ({r['rsi']:.0f})", f"RSI in oversold territory ({r['rsi']:.0f})"))
     elif r["rsi"] > 65:
-        neg.append(f"RSI élevé ({r['rsi']:.0f}) : le titre a déjà fortement monté à court terme")
+        neg.append(tr(f"RSI élevé ({r['rsi']:.0f}) : le titre a déjà fortement monté à court terme", f"High RSI ({r['rsi']:.0f}): the stock has already risen significantly in the short term"))
     if r["rsi_turn_score"] > 0 and r["rsi_delta3"] > 3:
-        pos.append(f"RSI qui rebondit (+{r['rsi_delta3']:.1f} pts en 3 jours) après être passé sous 40")
+        pos.append(tr(f"RSI qui rebondit (+{r['rsi_delta3']:.1f} pts en 3 jours) après être passé sous 40", f"RSI rebounding (+{r['rsi_delta3']:.1f} points in 3 days) after falling below 40"))
     if r["macd_bullish"] and r["macd_slope_pct"] > 0:
-        pos.append("MACD positif et en accélération")
+        pos.append(tr("MACD positif et en accélération", "Positive and accelerating MACD"))
     elif (not r["macd_bullish"]) and r["macd_slope_pct"] < 0:
-        neg.append("MACD négatif et en dégradation : momentum encore baissier")
+        neg.append(tr("MACD négatif et en dégradation : momentum encore baissier", "Negative and deteriorating MACD: bearish momentum remains"))
     if r["vol_score"] >= 4:
-        pos.append(f"Volume supérieur à la normale (x{r['vol_ratio']:.2f}) sur un titre qui ne baisse pas")
+        pos.append(tr(f"Volume supérieur à la normale (x{r['vol_ratio']:.2f}) sur un titre qui ne baisse pas", f"Above-normal volume (x{r['vol_ratio']:.2f}) while the stock is not falling"))
     elif r["vol_ratio"] < 0.8:
-        neg.append(f"Volume faible (x{r['vol_ratio']:.2f}) : peu de conviction du marché")
+        neg.append(tr(f"Volume faible (x{r['vol_ratio']:.2f}) : peu de conviction du marché", f"Low volume (x{r['vol_ratio']:.2f}): limited market conviction"))
     if r["drawdown_pct"] >= 20:
-        pos.append(f"Décote de {r['drawdown_pct']:.0f}% par rapport au plus haut 6 mois")
+        pos.append(tr(f"Décote de {r['drawdown_pct']:.0f}% par rapport au plus haut 6 mois", f"Trading {r['drawdown_pct']:.0f}% below its 6-month high"))
     elif r["drawdown_pct"] < 8:
-        neg.append(f"Peu de décote ({r['drawdown_pct']:.0f}%) : le point d'entrée n'est pas avantageux")
+        neg.append(tr(f"Peu de décote ({r['drawdown_pct']:.0f}%) : le point d'entrée n'est pas avantageux", f"Limited discount ({r['drawdown_pct']:.0f}%): the entry point may not be attractive"))
     if -3 <= r["pct_vs_sma50"] <= 3:
-        pos.append("Proche de la SMA50 : zone d'entrée classique")
+        pos.append(tr("Proche de la SMA50 : zone d'entrée classique", "Close to the SMA50: a common entry zone"))
     elif r["pct_vs_sma50"] > 12:
-        neg.append(f"Titre étendu ({r['pct_vs_sma50']:+.0f}% vs SMA50) : risque de repli")
+        neg.append(tr(f"Titre étendu ({r['pct_vs_sma50']:+.0f}% vs SMA50) : risque de repli", f"Price extended ({r['pct_vs_sma50']:+.0f}% vs SMA50): pullback risk"))
     elif r["pct_vs_sma50"] < -12:
-        neg.append(f"Nettement sous la SMA50 ({r['pct_vs_sma50']:+.0f}%) : tendance dégradée")
+        neg.append(tr(f"Nettement sous la SMA50 ({r['pct_vs_sma50']:+.0f}%) : tendance dégradée", f"Well below the SMA50 ({r['pct_vs_sma50']:+.0f}%): weakened trend"))
     if pd.notna(r["revenue_growth"]):
         if r["revenue_growth"] >= 0.15:
-            pos.append(f"Croissance du CA solide ({r['revenue_growth'] * 100:.0f}%)")
+            pos.append(tr(f"Croissance du CA solide ({r['revenue_growth'] * 100:.0f}%)", f"Strong revenue growth ({r['revenue_growth'] * 100:.0f}%)"))
         elif r["revenue_growth"] < 0:
-            neg.append(f"Chiffre d'affaires en baisse ({r['revenue_growth'] * 100:.0f}%)")
+            neg.append(tr(f"Chiffre d'affaires en baisse ({r['revenue_growth'] * 100:.0f}%)", f"Revenue declining ({r['revenue_growth'] * 100:.0f}%)"))
     if pd.notna(r["profit_margin"]):
         if r["profit_margin"] < 0:
-            neg.append(f"Entreprise non rentable (marge nette {r['profit_margin'] * 100:.0f}%) : titre plus risqué")
+            neg.append(tr(f"Entreprise non rentable (marge nette {r['profit_margin'] * 100:.0f}%) : titre plus risqué", f"Company is unprofitable (net margin {r['profit_margin'] * 100:.0f}%): higher-risk stock"))
         elif r["profit_margin"] >= 0.10:
-            pos.append(f"Rentable (marge nette {r['profit_margin'] * 100:.0f}%)")
+            pos.append(tr(f"Rentable (marge nette {r['profit_margin'] * 100:.0f}%)", f"Profitable (net margin {r['profit_margin'] * 100:.0f}%)"))
 
     color, _ = score_bucket(r["score"])
     verdict = {
@@ -654,6 +654,82 @@ def quick_read(r: dict):
         "red": tr("🔴 Peu favorable à court terme", "🔴 Unfavorable in the short term"),
     }[color]
     return verdict, pos, neg
+
+
+def translated_category(category: str) -> str:
+    """Translate the categories used by the watchlist without changing stored values."""
+    translations = {
+        "Semi-conducteurs": "Semiconductors", "Logiciels": "Software", "Cybersécurité": "Cybersecurity",
+        "Défense": "Defense", "Aérospatial": "Aerospace", "Énergie": "Energy",
+        "Santé": "Healthcare", "Biotechnologies": "Biotechnology", "Finance": "Financials",
+        "Consommation": "Consumer", "Industrie": "Industrials", "Automobile": "Automotive",
+        "Matières premières": "Materials", "Télécommunications": "Telecommunications",
+        "ETF": "ETF", "Diversifié": "Diversified", "Technologie": "Technology",
+        "Big Tech": "Big Tech", "Biotech": "Biotech", "Consommation/Fintech": "Consumer/Fintech",
+        "Croissance spéculative - Santé": "Speculative growth - Healthcare", "E-commerce": "E-commerce",
+        "Fintech": "Fintech", "Fintech/SaaS": "Fintech/SaaS", "Logiciel/IA": "Software/AI",
+        "Média": "Media", "Software/Cloud": "Software/Cloud", "Spatial/Défense": "Space/Defense",
+        "Spéculatif - Batteries": "Speculative - Batteries", "Spéculatif - Biotech/IA": "Speculative - Biotech/AI",
+        "Spéculatif - Biotechnologie": "Speculative - Biotechnology", "Spéculatif - IA": "Speculative - AI",
+        "Spéculatif - IA/Défense": "Speculative - AI/Defense", "Spéculatif - IA/Santé": "Speculative - AI/Healthcare",
+        "Spéculatif - Informatique quantique": "Speculative - Quantum computing", "Spéculatif - Nucléaire": "Speculative - Nuclear",
+        "Spéculatif - Robotique": "Speculative - Robotics", "Spéculatif - Spatial": "Speculative - Space",
+        "Spéculatif - Spatial/Données": "Speculative - Space/Data", "Spéculatif - Spatial/Défense": "Speculative - Space/Defense",
+        "Spéculatif - eVTOL": "Speculative - eVTOL", "Énergie propre": "Clean energy", "Énergie solaire": "Solar energy",
+    }
+    return translations.get(str(category), str(category)) if IS_EN else str(category)
+
+
+def render_stock_details(r: dict):
+    """Expanded score breakdown and all the principal metrics for a selected stock."""
+    color, status = score_bucket(r["score"])
+    st.markdown(f"### {'📊 Stock details' if IS_EN else '📊 Détail de l’action'} — {r['ticker']} · {r['name']}")
+    a, b, c, d = st.columns(4)
+    a.metric(tr("Score global", "Overall score"), f"{r['score']:.1f}/100")
+    b.metric(tr("Statut", "Status"), status)
+    c.metric(tr("Prix actuel", "Current price"), f"{r['price']:.2f}")
+    d.metric(tr("Catégorie", "Category"), translated_category(r.get("category", "—")))
+
+    st.markdown(tr("#### Décomposition du score", "#### Score breakdown"))
+    components = [
+        (tr("RSI — niveau", "RSI — level"), r.get("rsi_level_score", 0), MAX_RSI_LEVEL, tr("Mesure le niveau de survente", "Measures oversold conditions")),
+        (tr("RSI — retournement", "RSI — rebound"), r.get("rsi_turn_score", 0), MAX_RSI_TURN, tr("Récompense un rebond après une zone de survente", "Rewards a rebound after oversold conditions")),
+        (tr("MACD — niveau", "MACD — level"), r.get("macd_level_score", 0), MAX_MACD_LEVEL, tr("Mesure le momentum actuel", "Measures current momentum")),
+        (tr("MACD — accélération", "MACD — acceleration"), r.get("macd_slope_score", 0), MAX_MACD_SLOPE, tr("Mesure l’évolution récente du momentum", "Measures recent momentum change")),
+        (tr("Volume", "Volume"), r.get("vol_score", 0), MAX_VOL, tr("Compare le volume récent à sa moyenne", "Compares recent volume with its average")),
+        (tr("Baisse depuis le plus haut", "Drop from high"), r.get("drawdown_score", 0), MAX_DRAWDOWN, tr("Récompense une baisse depuis le plus haut sur six mois", "Rewards a pullback from the six-month high")),
+        (tr("Proximité SMA50", "SMA50 proximity"), r.get("support_score", 0), MAX_SUPPORT, tr("Favorise un prix proche de la moyenne mobile à 50 jours", "Favors a price near the 50-day moving average")),
+        (tr("Croissance du chiffre d’affaires", "Revenue growth"), r.get("growth_score", 0), MAX_GROWTH, tr("Croissance annuelle du chiffre d’affaires", "Year-over-year revenue growth")),
+        (tr("Marge brute", "Gross margin"), r.get("margin_score", 0), MAX_MARGIN, tr("Rentabilité après coûts directs", "Profitability after direct costs")),
+        (tr("Marge nette", "Net margin"), r.get("profit_score", 0), MAX_PROFIT, tr("Part du chiffre d’affaires conservée en bénéfice net", "Share of revenue retained as net profit")),
+    ]
+    score_rows = []
+    for label, points, maximum, explanation in components:
+        score_rows.append({
+            tr("Critère", "Factor"): label,
+            tr("Points", "Points"): f"{points:.1f} / {maximum}",
+            tr("Interprétation", "What it measures"): explanation,
+        })
+    st.dataframe(pd.DataFrame(score_rows), use_container_width=True, hide_index=True)
+
+    st.markdown(tr("#### Indicateurs et données fondamentales", "#### Indicators and fundamentals"))
+    def pct_or_na(value):
+        return f"{value * 100:.1f}%" if value is not None and pd.notna(value) else "N/A"
+    metrics = [
+        ("RSI (14)", f"{r['rsi']:.1f}"),
+        (tr("Variation RSI sur 3 jours", "3-day RSI change"), f"{r['rsi_delta3']:+.1f}"),
+        ("MACD histogram", f"{r['macd_hist_pct']:+.3f}%"),
+        (tr("Pente MACD sur 3 jours", "3-day MACD slope"), f"{r['macd_slope_pct']:+.3f}%"),
+        (tr("Volume / moyenne 20 jours", "Volume / 20-day average"), f"{r['vol_ratio']:.2f}x"),
+        (tr("Baisse depuis le plus haut 6 mois", "Drop from 6-month high"), f"{r['drawdown_pct']:.1f}%"),
+        (tr("Écart à la SMA50", "Distance from SMA50"), f"{r['pct_vs_sma50']:+.1f}%"),
+        (tr("Croissance du chiffre d’affaires", "Revenue growth"), pct_or_na(r.get("revenue_growth"))),
+        (tr("Marge brute", "Gross margin"), pct_or_na(r.get("gross_margin"))),
+        (tr("Marge nette", "Net margin"), pct_or_na(r.get("profit_margin"))),
+    ]
+    mdf = pd.DataFrame(metrics, columns=[tr("Indicateur", "Metric"), tr("Valeur", "Value")])
+    st.dataframe(mdf, use_container_width=True, hide_index=True)
+    st.caption(tr("Les données indisponibles sont affichées N/A et reçoivent un score fondamental neutre dans le modèle.", "Unavailable data is shown as N/A and receives a neutral fundamental score in this model."))
 
 
 CHAT_SYSTEM_PROMPT = (
@@ -782,9 +858,11 @@ with st.sidebar:
         help=tr("Empêche le spam si un score oscille autour d'une frontière de catégorie.", "Prevents spam when a score fluctuates around a category boundary.")
     )
     st.caption(
-        "Une alerte est envoyée quand un titre **change de catégorie** "
+        tr("Une alerte est envoyée quand un titre **change de catégorie** "
         "(🔴→🟡, 🟡→🟢, etc.) OU quand son score **progresse d'au moins "
-        f"{score_jump_threshold} points**, avec un cooldown de {cooldown_minutes} min par titre."
+        f"{score_jump_threshold} points**, avec un délai minimum de {cooldown_minutes} min par titre.", "An alert is sent when a stock **changes category** "
+        "(🔴→🟡, 🟡→🟢, etc.) OR when its score **increases by at least "
+        f"{score_jump_threshold} points**, with a {cooldown_minutes}-minute cooldown per stock." )
     )
 
     st.divider()
@@ -847,7 +925,7 @@ BUCKET_RANK = {"red": 0, "yellow": 1, "green": 2}
 # ============================================================
 if should_scan:
     results = []
-    progress = st.progress(0.0, text="Scan en cours...")
+    progress = st.progress(0.0, text=tr("Scan en cours...", "Scanning stocks..."))
     tickers = list(ALL_ASSETS.keys())
 
     for i, ticker in enumerate(tickers):
@@ -857,7 +935,7 @@ if should_scan:
             res["name"] = name
             res["category"] = category
             results.append(res)
-        progress.progress((i + 1) / len(tickers), text=f"Analyse de {ticker}...")
+        progress.progress((i + 1) / len(tickers), text=tr(f"Analyse de {ticker}...", f"Analyzing {ticker}..."))
 
     progress.empty()
     st.session_state.last_results = results
@@ -914,11 +992,11 @@ if should_scan:
         if saved_email:
             ok, err = send_email_alert(saved_email, to_alert)
             if ok:
-                st.toast(f"📧 Email envoyé pour {len(to_alert)} mouvement(s)")
+                st.toast(tr(f"📧 Email envoyé pour {len(to_alert)} mouvement(s)", f"📧 Email sent for {len(to_alert)} change(s)"))
             else:
-                st.warning(f"Échec de l'envoi de l'email : {err}")
+                st.warning(tr(f"Échec de l'envoi de l'email : {err}", f"Email sending failed: {err}"))
         else:
-            st.warning("Enregistre d'abord ton adresse email dans la barre latérale.")
+            st.warning(tr("Enregistre d'abord ton adresse email dans la barre latérale.", "Save your email address in the sidebar first."))
 
 results = st.session_state.last_results or []
 
@@ -928,7 +1006,7 @@ results = st.session_state.last_results or []
 FILTER_DEFAULTS = {
     "flt_search": "", "flt_cat": [], "flt_bucket": [], "flt_score": 0, "flt_rsi": 100, "flt_dd": 0,
     "flt_vol": 0.0, "flt_macd": False, "flt_sma": False, "flt_profit": False, "flt_rebound": False,
-    "flt_sort": "Score", "flt_order": "Décroissant",
+    "flt_sort": "Score", "flt_order": ("Descending" if IS_EN else "Décroissant"),
 }
 for _k, _v in FILTER_DEFAULTS.items():
     st.session_state.setdefault(_k, _v)
@@ -946,6 +1024,12 @@ SORT_OPTIONS = ({
     "Score": "score", "RSI": "rsi", "Baisse depuis le plus haut": "drawdown_pct",
     "Volume (ratio)": "vol_ratio", "Écart à la SMA50": "pct_vs_sma50",
 })
+# Reset stale UI labels when the user switches language, preventing invalid widget states.
+if st.session_state.get("flt_sort") not in SORT_OPTIONS:
+    st.session_state.flt_sort = next(iter(SORT_OPTIONS))
+valid_order_options = ["Descending", "Ascending"] if IS_EN else ["Décroissant", "Croissant"]
+if st.session_state.get("flt_order") not in valid_order_options:
+    st.session_state.flt_order = valid_order_options[0]
 BUCKET_FILTER_LABELS = {BUCKET_TEXT["green"]: "green", BUCKET_TEXT["yellow"]: "yellow", BUCKET_TEXT["red"]: "red"}
 
 if results:
@@ -954,10 +1038,10 @@ if results:
     n_red = len(results) - n_green - n_yellow
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Actions suivies", len(results))
-    c2.metric("🟢 Achat potentiel", n_green)
-    c3.metric("🟡 À surveiller", n_yellow)
-    c4.metric("🔴 Rien à faire", n_red)
+    c1.metric(tr("Actions suivies", "Tracked stocks"), len(results))
+    c2.metric(tr("🟢 Achat potentiel", "🟢 Potential buy"), n_green)
+    c3.metric(tr("🟡 À surveiller", "🟡 Watchlist"), n_yellow)
+    c4.metric(tr("🔴 Rien à faire", "🔴 No action"), n_red)
 
     if st.session_state.last_scan_time:
         st.caption(tr(f"Dernier scan : {st.session_state.last_scan_time.strftime('%d/%m/%Y %H:%M:%S')}", f"Last scan: {st.session_state.last_scan_time.strftime('%Y-%m-%d %H:%M:%S')}"))
@@ -973,7 +1057,10 @@ if results:
         with st.expander(tr("🔎 Recherche & filtres", "🔎 Search & filters"), expanded=True):
             f1, f2, f3 = st.columns(3)
             f1.text_input(tr("Recherche (ticker ou nom)", "Search (ticker or name)"), key="flt_search", placeholder="e.g. NVDA, Palantir...")
-            f2.multiselect(tr("Catégorie", "Category"), categories, key="flt_cat")
+            category_labels = {translated_category(cat): cat for cat in categories}
+            if any(value not in category_labels for value in st.session_state.get("flt_cat", [])):
+                st.session_state.flt_cat = []
+            selected_category_labels = f2.multiselect(tr("Catégorie", "Category"), list(category_labels.keys()), key="flt_cat")
             f3.multiselect(tr("Statut", "Status"), list(BUCKET_FILTER_LABELS.keys()), key="flt_bucket")
 
             g1, g2, g3, g4 = st.columns(4)
@@ -997,8 +1084,9 @@ if results:
         q = st.session_state.flt_search.strip().lower()
         if q:
             fdf = fdf[fdf["ticker"].str.lower().str.contains(q, regex=False) | fdf["name"].str.lower().str.contains(q, regex=False)]
-        if st.session_state.flt_cat:
-            fdf = fdf[fdf["category"].isin(st.session_state.flt_cat)]
+        if selected_category_labels:
+            selected_original_categories = [category_labels[label] for label in selected_category_labels]
+            fdf = fdf[fdf["category"].isin(selected_original_categories)]
         if st.session_state.flt_bucket:
             fdf = fdf[fdf["bucket"].isin([BUCKET_FILTER_LABELS[b] for b in st.session_state.flt_bucket])]
         fdf = fdf[fdf["score"] >= st.session_state.flt_score]
@@ -1021,14 +1109,28 @@ if results:
             st.info(tr("Aucune action ne correspond à ces critères. Assouplis un filtre ou clique sur Réinitialiser.", "No stocks match these criteria. Loosen a filter or click Reset."))
         for _, r in fdf.iterrows():
             color, label = score_bucket(r["score"])
-            cols = st.columns([3, 1, 1, 1, 1, 1])
-            cols[0].markdown(f"**{r['ticker']}** — {r['name']}  \n<span style='color:#9aa0ab;font-size:0.8rem'>{r['category']}</span>", unsafe_allow_html=True)
+            cols = st.columns([2.8, 1, 0.8, 1, 1, 1.2, 1.1])
+            cols[0].markdown(f"**{r['ticker']}** — {r['name']}  \n<span style='color:#9aa0ab;font-size:0.8rem'>{translated_category(r['category'])}</span>", unsafe_allow_html=True)
             cols[1].markdown(f"<span class='score-badge badge-{color}'>{r['score']:.1f}/100</span>", unsafe_allow_html=True)
             cols[2].markdown(f"RSI: **{r['rsi']:.0f}**")
-            cols[3].markdown(f"Prix: **{r['price']:.2f}**")
-            cols[4].markdown(f"Drawdown: **{r['drawdown_pct']:.1f}%**")
+            cols[3].markdown(f"{tr('Prix', 'Price')}: **{r['price']:.2f}**")
+            cols[4].markdown(f"{tr('Baisse', 'Drop')}: **{r['drawdown_pct']:.1f}%**")
             cols[5].markdown(label)
+            if cols[6].button(tr("Détails ↗", "Details ↗"), key=f"details_{r['ticker']}", use_container_width=True):
+                st.session_state.selected_detail_ticker = r['ticker']
             st.divider()
+
+        selected_detail = st.session_state.get("selected_detail_ticker")
+        available_tickers = set(df_results["ticker"].tolist())
+        if selected_detail in available_tickers:
+            detail_record = df_results[df_results["ticker"] == selected_detail].iloc[0].to_dict()
+            with st.container(border=True):
+                head_col, close_col = st.columns([6, 1])
+                head_col.markdown(f"### {tr('Action sélectionnée', 'Selected stock')}: {selected_detail}")
+                if close_col.button(tr("Fermer ✕", "Close ✕"), key="close_stock_details"):
+                    st.session_state.selected_detail_ticker = None
+                    st.rerun()
+                render_stock_details(detail_record)
 
     # ---------------- CHATBOT ----------------
     with tab_chat:
