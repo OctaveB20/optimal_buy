@@ -1,20 +1,20 @@
 """
-📈 Stock Opportunity Scanner
-----------------------------
+📈 Stock Opportunity Scanner  (v2 - scoring rééquilibré)
+---------------------------------------------------------
 Application Streamlit qui scanne une watchlist d'actions premium + les positions
-du portefeuille, calcule un score d'opportunité d'achat (RSI, MACD, volume,
-drawdown, support) et envoie un email automatique quand une action change
-de catégorie ou voit son score progresser significativement.
+du portefeuille, calcule un score d'opportunité d'achat et envoie un email
+automatique quand une action change de catégorie ou voit son score progresser.
 
-Scoring : chaque critère rapporte des points de façon CONTINUE (interpolation
-linéaire entre une borne "faible" et une borne "excellente"), et non plus de
-façon binaire (tout ou rien). Les bornes restent volontairement resserrées
-pour garder une notation exigeante.
-
-Alertes email : déclenchées sur changement de catégorie (rouge -> jaune ->
-vert) OU sur une hausse de score jugée significative, avec un délai minimum
-entre deux alertes pour un même titre (cooldown) afin d'éviter le spam en
-cas d'oscillation autour d'une frontière.
+SCORING V2 (total direct sur 100, plus de renormalisation 135 -> 100) :
+    Timing (80 pts)
+      - RSI           25 : 15 niveau (survente) + 10 retournement (rebond depuis la survente)
+      - MACD          20 : 10 niveau de l'histogramme + 10 accélération (pente sur 3 jours)
+      - Volume        10 : ratio 3 derniers jours / moyenne 20j (divisé par 2 si prix en baisse)
+      - Drawdown      15 : baisse depuis le plus haut 6 mois
+      - Support SMA50 10 : zone idéale = proche de la SMA50 (-3% / +3%), pas trop étendu
+    Qualité (20 pts)
+      - Croissance CA  8 | Marge brute 5 | Marge nette 7
+      - Donnée indisponible (ETF, titres étrangers...) => score neutre (50 %), pas de pénalité
 
 Installation :
     pip install streamlit yfinance pandas numpy streamlit-autorefresh supabase requests
@@ -23,10 +23,9 @@ Lancement :
     streamlit run stock_scanner.py
 
 Configuration : secrets Streamlit SUPABASE_URL, SUPABASE_KEY, RESEND_API_KEY,
-RESEND_FROM_EMAIL. Voir les étapes de configuration fournies avec le code.
+RESEND_FROM_EMAIL.
 """
 
-import time
 from datetime import datetime, date
 
 import numpy as np
@@ -43,15 +42,10 @@ try:
 except ImportError:
     AUTOREFRESH_AVAILABLE = False
 
-# ============================================================
-# CONFIG PAGE + STYLE (repris du look du portfolio tracker)
-# ============================================================
 st.set_page_config(page_title="Stock Opportunity Scanner", page_icon="📈", layout="wide")
 
 # ============================================================
 # CONFIGURATION PERSISTANTE SUPABASE + EMAIL RESEND
-# Secrets attendus dans .streamlit/secrets.toml (ou variables d'environnement)
-# SUPABASE_URL, SUPABASE_KEY, RESEND_API_KEY, RESEND_FROM_EMAIL
 # ============================================================
 def get_setting(name, default=""):
     try:
@@ -60,7 +54,7 @@ def get_setting(name, default=""):
         return os.getenv(name, default)
 
 SUPABASE_URL = get_setting("SUPABASE_URL")
-SUPABASE_KEY = get_setting("SUPABASE_KEY")  # clé serveur/service_role, jamais exposée côté navigateur
+SUPABASE_KEY = get_setting("SUPABASE_KEY")
 RESEND_API_KEY = get_setting("RESEND_API_KEY")
 RESEND_FROM_EMAIL = get_setting("RESEND_FROM_EMAIL")
 
@@ -130,57 +124,29 @@ st.markdown("""
 <style>
     .main { background-color: #0e1117; }
     .block-container { padding-top: 2rem; }
-
     .card {
         background: linear-gradient(145deg, #161a23, #1c2029);
-        border: 1px solid #2a2f3a;
-        border-radius: 14px;
-        padding: 16px 18px;
-        margin-bottom: 14px;
+        border: 1px solid #2a2f3a; border-radius: 14px;
+        padding: 16px 18px; margin-bottom: 14px;
     }
     .card-green { border-left: 5px solid #22c55e; }
     .card-yellow { border-left: 5px solid #eab308; }
     .card-red { border-left: 5px solid #ef4444; }
-
     .ticker-name { font-size: 1.05rem; font-weight: 700; color: #f5f5f5; }
     .ticker-sub { font-size: 0.78rem; color: #9aa0ab; margin-bottom: 6px; }
-
-    .score-badge {
-        display: inline-block;
-        padding: 3px 12px;
-        border-radius: 999px;
-        font-weight: 700;
-        font-size: 0.85rem;
-    }
+    .score-badge { display: inline-block; padding: 3px 12px; border-radius: 999px; font-weight: 700; font-size: 0.85rem; }
     .badge-green { background: rgba(34,197,94,0.18); color: #4ade80; }
     .badge-yellow { background: rgba(234,179,8,0.18); color: #facc15; }
     .badge-red { background: rgba(239,68,68,0.18); color: #f87171; }
-
     .crit-row { display: flex; justify-content: space-between; font-size: 0.82rem; }
     .crit-ok { color: #4ade80; }
     .crit-mid { color: #facc15; }
     .crit-ko { color: #6b7280; }
-
-    .bar-track {
-        background: #262b36;
-        border-radius: 6px;
-        height: 6px;
-        width: 100%;
-        margin: 2px 0 8px 0;
-        overflow: hidden;
-    }
-    .bar-fill {
-        height: 100%;
-        border-radius: 6px;
-    }
-
+    .bar-track { background: #262b36; border-radius: 6px; height: 6px; width: 100%; margin: 2px 0 8px 0; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 6px; }
     .section-title {
-        font-size: 1.15rem;
-        font-weight: 700;
-        color: #e5e7eb;
-        margin: 22px 0 10px 0;
-        border-bottom: 1px solid #2a2f3a;
-        padding-bottom: 6px;
+        font-size: 1.15rem; font-weight: 700; color: #e5e7eb;
+        margin: 22px 0 10px 0; border-bottom: 1px solid #2a2f3a; padding-bottom: 6px;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -189,7 +155,7 @@ st.title("📈 Stock Opportunity Scanner")
 st.caption("Détection automatique des meilleurs moments d'achat sur ta watchlist premium")
 
 # ============================================================
-# WATCHLIST (issue de ta liste "premium" + positions du portefeuille)
+# WATCHLIST
 # ============================================================
 WATCHLIST = {
     "NVDA": ("NVIDIA", "Semi-conducteurs"),
@@ -247,7 +213,7 @@ WATCHLIST = {
     "ISRG": ("Intuitive Surgical", "Santé"),
     "TMO": ("Thermo Fisher Scientific", "Santé"),
     "DE": ("Deere & Company", "Industrie"),
-    # Actions spéculatives supplémentaires : forte volatilité / risque élevé
+    # Actions spéculatives : forte volatilité / risque élevé
     "IONQ": ("IonQ", "Spéculatif - Informatique quantique"),
     "RGTI": ("Rigetti Computing", "Spéculatif - Informatique quantique"),
     "QBTS": ("D-Wave Quantum", "Spéculatif - Informatique quantique"),
@@ -270,7 +236,6 @@ WATCHLIST = {
     "RDW": ("Redwire", "Spéculatif - Spatial/Défense"),
 }
 
-# Positions actuelles du portefeuille (hors ETF, non spéculatives et non déjà présentes)
 PORTFOLIO_EXTRA = {
     "NVNO": ("enVVeno Medical", "Portefeuille - Spéculatif"),
     "OTLK": ("Outlook Therapeutics", "Portefeuille - Spéculatif"),
@@ -280,14 +245,27 @@ PORTFOLIO_EXTRA = {
 ALL_ASSETS = {**WATCHLIST, **PORTFOLIO_EXTRA}
 
 # ============================================================
+# BARÈME (points max par critère) - total = 100
+# ============================================================
+MAX_RSI_LEVEL, MAX_RSI_TURN = 15, 10
+MAX_RSI = MAX_RSI_LEVEL + MAX_RSI_TURN          # 25
+MAX_MACD_LEVEL, MAX_MACD_SLOPE = 10, 10
+MAX_MACD = MAX_MACD_LEVEL + MAX_MACD_SLOPE      # 20
+MAX_VOL = 10
+MAX_DRAWDOWN = 15
+MAX_SUPPORT = 10
+MAX_GROWTH, MAX_MARGIN, MAX_PROFIT = 8, 5, 7    # 20 au total
+
+# ============================================================
 # INDICATEURS TECHNIQUES
 # ============================================================
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    """RSI de Wilder (lissage exponentiel alpha=1/period), plus fidèle que la moyenne simple."""
     delta = close.diff()
     gain = delta.clip(lower=0)
     loss = -delta.clip(upper=0)
-    avg_gain = gain.rolling(period).mean()
-    avg_loss = loss.rolling(period).mean()
+    avg_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
     rs = avg_gain / avg_loss.replace(0, np.nan)
     rsi = 100 - (100 / (1 + rs))
     return rsi.fillna(50)
@@ -303,20 +281,26 @@ def compute_macd(close: pd.Series, fast=12, slow=26, signal=9):
 
 def scaled_score(value: float, worst: float, best: float, max_points: float) -> float:
     """
-    Interpolation linéaire non binaire entre deux bornes.
-    - value <= worst (ou >= worst selon le sens)  -> 0 point
-    - value atteint/dépasse best                  -> max_points
-    - entre les deux                               -> proportionnel
-
-    Fonctionne aussi bien pour un critère "plus c'est haut mieux c'est"
-    (best > worst) que pour un critère "plus c'est bas mieux c'est"
-    (best < worst, ex: RSI).
+    Interpolation linéaire entre deux bornes (fonctionne dans les deux sens :
+    best > worst = "plus haut, mieux" ; best < worst = "plus bas, mieux", ex: RSI).
     """
     if best == worst:
         return max_points if value >= best else 0.0
     frac = (value - worst) / (best - worst)
     frac = max(0.0, min(1.0, frac))
     return round(frac * max_points, 2)
+
+
+def band_score(value: float, zero_low: float, full_low: float, full_high: float,
+               zero_high: float, max_points: float) -> float:
+    """Score en trapèze : 0 hors de [zero_low, zero_high], plein dans [full_low, full_high]."""
+    if value <= zero_low or value >= zero_high:
+        return 0.0
+    if full_low <= value <= full_high:
+        return float(max_points)
+    if value < full_low:
+        return scaled_score(value, zero_low, full_low, max_points)
+    return scaled_score(value, zero_high, full_high, max_points)
 
 
 @st.cache_data(ttl=900, show_spinner=False)
@@ -332,12 +316,7 @@ def fetch_history(ticker: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_fundamentals(ticker: str) -> dict:
-    """
-    Récupère les indicateurs fondamentaux via yfinance.
-    Renvoie des fractions (ex: 0.15 = 15%) ou None si la donnée est indisponible
-    (yfinance ne fournit pas toujours ces champs pour toutes les valeurs).
-    Cache 24h car ces données bougent lentement (résultats trimestriels).
-    """
+    """Fractions (0.15 = 15 %) ou None si indisponible. Cache 24h."""
     try:
         info = yf.Ticker(ticker).info
         return {
@@ -349,6 +328,13 @@ def fetch_fundamentals(ticker: str) -> dict:
         return {"revenue_growth": None, "gross_margin": None, "profit_margin": None}
 
 
+def fundamental_points(value, worst, best, max_points):
+    """Points continus ; si la donnée est absente -> score neutre (50 %), sans pénalité."""
+    if value is None:
+        return round(max_points / 2, 2)
+    return scaled_score(value * 100, worst, best, max_points)
+
+
 def analyze_ticker(ticker: str) -> dict | None:
     df = fetch_history(ticker)
     if df.empty or len(df) < 60 or "Close" not in df:
@@ -356,80 +342,93 @@ def analyze_ticker(ticker: str) -> dict | None:
 
     close = df["Close"].dropna()
     volume = df["Volume"].dropna()
+    last_price = float(close.iloc[-1])
 
-    # --- RSI ---
+    # --- RSI : niveau (survente) + retournement (rebond depuis la survente) ---
     rsi_series = compute_rsi(close)
     rsi = float(rsi_series.iloc[-1])
-    # 30 pts max : RSI <= 20 (survente franche) -> 30 pts ; RSI >= 55 -> 0 pt
-    rsi_score = scaled_score(rsi, worst=55, best=20, max_points=30)
+    rsi_delta3 = float(rsi - rsi_series.iloc[-4])
+    rsi_min10 = float(rsi_series.iloc[-10:].min())
+    # Niveau : RSI <= 25 -> 15 pts ; RSI >= 50 -> 0
+    rsi_level_score = scaled_score(rsi, worst=50, best=25, max_points=MAX_RSI_LEVEL)
+    # Retournement : compte seulement si le RSI est passé sous 40 ces 10 derniers jours,
+    # et croît de 0 (0 pt) à +8 points en 3 jours (10 pts)
+    rsi_turn_score = (
+        scaled_score(rsi_delta3, worst=0, best=8, max_points=MAX_RSI_TURN)
+        if rsi_min10 < 40 else 0.0
+    )
+    rsi_score = round(rsi_level_score + rsi_turn_score, 2)
 
-    # --- MACD (force du signal, pas juste bullish/bearish) ---
+    # --- MACD : niveau de l'histogramme + accélération sur 3 jours ---
     macd_line, signal_line = compute_macd(close)
-    last_price = float(close.iloc[-1])
-    macd_hist = float(macd_line.iloc[-1] - signal_line.iloc[-1])
+    hist = macd_line - signal_line
+    macd_hist = float(hist.iloc[-1])
     macd_hist_pct = (macd_hist / last_price) * 100 if last_price else 0.0
+    macd_slope_pct = ((macd_hist - float(hist.iloc[-4])) / last_price) * 100 if last_price else 0.0
     macd_bullish = macd_hist > 0
-    # 20 pts max : histogramme >= +1.0% du prix -> 20 pts ; <= -0.3% -> 0 pt
-    macd_score = scaled_score(macd_hist_pct, worst=-0.3, best=1.0, max_points=20)
+    # Niveau : -0.5 % -> 0 ; +0.5 % -> 10 pts
+    macd_level_score = scaled_score(macd_hist_pct, worst=-0.5, best=0.5, max_points=MAX_MACD_LEVEL)
+    # Pente : histogramme qui monte de -0.1 % (0 pt) à +0.4 % (10 pts) en 3 jours
+    macd_slope_score = scaled_score(macd_slope_pct, worst=-0.1, best=0.4, max_points=MAX_MACD_SLOPE)
+    macd_score = round(macd_level_score + macd_slope_score, 2)
 
-    # --- Volume ---
-    vol_avg20 = volume.rolling(20).mean().iloc[-1]
-    vol_today = volume.iloc[-1]
-    vol_ratio = float(vol_today / vol_avg20) if pd.notna(vol_avg20) and vol_avg20 > 0 else 0.0
+    # --- Volume : 3 derniers jours vs moyenne 20j précédente (évite le biais de la séance en cours) ---
+    vol3 = volume.iloc[-3:].mean()
+    vol_avg20 = volume.iloc[-23:-3].mean()
+    vol_ratio = float(vol3 / vol_avg20) if pd.notna(vol_avg20) and vol_avg20 > 0 else 0.0
     vol_above_avg = vol_ratio > 1.0
-    # 15 pts max : ratio >= 2.0x la moyenne -> 15 pts ; <= 0.8x -> 0 pt
-    vol_score = scaled_score(vol_ratio, worst=0.8, best=2.0, max_points=15)
+    ret3 = float(close.iloc[-1] / close.iloc[-4] - 1)
+    # 0.8x -> 0 ; 1.8x -> 10 pts. Volume sur un titre qui baisse = distribution : points divisés par 2
+    vol_score = scaled_score(vol_ratio, worst=0.8, best=1.8, max_points=MAX_VOL)
+    if ret3 < 0:
+        vol_score = round(vol_score * 0.5, 2)
 
-    # --- Drawdown ---
+    # --- Drawdown (plus haut ~6 mois) ---
     recent_high = close.rolling(126, min_periods=30).max().iloc[-1]
     drawdown_pct = float((recent_high - last_price) / recent_high * 100) if recent_high else 0.0
     drawdown_ok = drawdown_pct > 15
-    # 20 pts max : baisse >= 30% -> 20 pts ; <= 5% -> 0 pt
-    drawdown_score = scaled_score(drawdown_pct, worst=5, best=30, max_points=20)
+    # 5 % -> 0 ; 30 % et plus -> 15 pts
+    drawdown_score = scaled_score(drawdown_pct, worst=5, best=30, max_points=MAX_DRAWDOWN)
 
-    # --- Support (position relative à la SMA50, en %) ---
+    # --- Support : zone idéale = proche de la SMA50 (en %) ---
     sma50 = close.rolling(50, min_periods=30).mean().iloc[-1]
     pct_vs_sma50 = float((last_price - sma50) / sma50 * 100) if pd.notna(sma50) and sma50 > 0 else -100.0
     above_support = pct_vs_sma50 > 0
-    # 15 pts max : >= +8% au-dessus de la SMA50 -> 15 pts ; <= -5% -> 0 pt
-    support_score = scaled_score(pct_vs_sma50, worst=-5, best=8, max_points=15)
+    # Plein entre -3 % et +3 % ; dégressif jusqu'à 0 pt à -12 % (couteau qui tombe) et +15 % (titre étendu)
+    support_score = band_score(pct_vs_sma50, zero_low=-12, full_low=-3, full_high=3,
+                               zero_high=15, max_points=MAX_SUPPORT)
 
-    # --- Fondamentaux (qualité de l'entreprise, pas juste le prix) ---
+    # --- Fondamentaux (filtre qualité, 20 pts) ---
     fundamentals = fetch_fundamentals(ticker)
     revenue_growth = fundamentals["revenue_growth"]
     gross_margin = fundamentals["gross_margin"]
     profit_margin = fundamentals["profit_margin"]
 
-    # +12 pts (continu) : croissance CA <= 0% -> 0 pt ; >= 20% -> 12 pts pleins
-    growth_score = scaled_score(
-        revenue_growth * 100 if revenue_growth is not None else -100,
-        worst=0, best=20, max_points=12
-    )
-    # +10 pts (continu) : marge brute <= 20% -> 0 pt ; >= 60% -> 10 pts pleins
-    margin_score = scaled_score(
-        gross_margin * 100 if gross_margin is not None else -100,
-        worst=20, best=60, max_points=10
-    )
-    # +13 pts (continu) : marge nette <= -10% -> 0 pt ; >= 15% -> 13 pts pleins
-    profit_score = scaled_score(
-        profit_margin * 100 if profit_margin is not None else -100,
-        worst=-10, best=15, max_points=13
-    )
+    # Bornes relevées pour ne plus saturer dès que l'entreprise est "bonne"
+    # Croissance CA : 0 % -> 0 ; 40 % -> 8 pts
+    growth_score = fundamental_points(revenue_growth, worst=0, best=40, max_points=MAX_GROWTH)
+    # Marge brute : 20 % -> 0 ; 70 % -> 5 pts
+    margin_score = fundamental_points(gross_margin, worst=20, best=70, max_points=MAX_MARGIN)
+    # Marge nette : -10 % -> 0 ; 25 % -> 7 pts
+    profit_score = fundamental_points(profit_margin, worst=-10, best=25, max_points=MAX_PROFIT)
 
-    # Total brut sur 135 (100 technique + 35 fondamentaux), renormalisé sur 100
     raw_total = (
         rsi_score + macd_score + vol_score + drawdown_score + support_score
         + growth_score + margin_score + profit_score
     )
-    score = round(raw_total * (100.0 / 135.0), 1)
+    score = round(raw_total, 1)  # déjà sur 100
 
     return {
         "ticker": ticker,
         "price": last_price,
         "rsi": rsi,
+        "rsi_delta3": rsi_delta3,
+        "rsi_level_score": rsi_level_score,
+        "rsi_turn_score": rsi_turn_score,
         "rsi_score": rsi_score,
         "macd_bullish": macd_bullish,
         "macd_hist_pct": macd_hist_pct,
+        "macd_slope_pct": macd_slope_pct,
         "macd_score": macd_score,
         "vol_above_avg": vol_above_avg,
         "vol_ratio": vol_ratio,
@@ -459,12 +458,10 @@ BUCKET_LABELS = {
     "yellow": ("🟡", "À surveiller", "#eab308"),
     "red": ("🔴", "Rien à faire", "#ef4444"),
 }
+BUCKET_TEXT = {k: f"{v[0]} {v[1]}" for k, v in BUCKET_LABELS.items()}
 
 
 def _build_email_html(items: list[dict]) -> str:
-    """Construit un email HTML soigné à partir d'une liste d'alertes.
-    Chaque item attendu : {'result': dict, 'reason': str, 'prev_score': float|None, 'prev_bucket': str|None}
-    """
     rows_html = []
     for item in items:
         r = item["result"]
@@ -619,15 +616,13 @@ with st.sidebar:
     st.caption(
         "Une alerte est envoyée quand un titre **change de catégorie** "
         "(🔴→🟡, 🟡→🟢, etc.) OU quand son score **progresse d'au moins "
-        f"{score_jump_threshold} points**, avec un cooldown de {cooldown_minutes} min par titre. "
-        "Il n'y a pas de plafond fixe de mails/jour : le nombre dépend du nombre de "
-        "titres qui changent réellement de situation."
+        f"{score_jump_threshold} points**, avec un cooldown de {cooldown_minutes} min par titre."
     )
 
     st.divider()
     st.subheader("🎯 Seuils de score")
-    threshold_buy = st.slider("Seuil 'Achat potentiel' 🟢", 50, 100, 65)
-    threshold_watch = st.slider("Seuil 'À surveiller' 🟡", 30, threshold_buy - 1, 45)
+    threshold_buy = st.slider("Seuil 'Achat potentiel' 🟢", 50, 100, 60)
+    threshold_watch = st.slider("Seuil 'À surveiller' 🟡", 30, threshold_buy - 1, 42)
 
     st.divider()
     st.subheader("🔄 Scan automatique")
@@ -645,7 +640,6 @@ if AUTOREFRESH_AVAILABLE and auto_scan:
 # ETAT SESSION
 # ============================================================
 if "ticker_alert_state" not in st.session_state:
-    # État persistant : récupéré depuis Supabase, pour conserver le cooldown après redémarrage.
     st.session_state.ticker_alert_state = load_persistent_alert_state()
 if "last_results" not in st.session_state:
     st.session_state.last_results = None
@@ -657,17 +651,16 @@ should_scan = scan_button or (auto_scan and AUTOREFRESH_AVAILABLE) or st.session
 
 def score_bucket(score):
     if score >= threshold_buy:
-        return "green", "🟢 Achat potentiel"
+        return "green", BUCKET_TEXT["green"]
     elif score >= threshold_watch:
-        return "yellow", "🟡 À surveiller"
-    return "red", "🔴 Rien à faire"
+        return "yellow", BUCKET_TEXT["yellow"]
+    return "red", BUCKET_TEXT["red"]
 
 
 BUCKET_RANK = {"red": 0, "yellow": 1, "green": 2}
 
 
 def crit_class(points, max_points):
-    """Couleur du critère selon la fraction de points obtenus (et non plus juste oui/non)."""
     frac = points / max_points if max_points else 0
     if frac >= 0.66:
         return "crit-ok"
@@ -706,12 +699,6 @@ if should_scan:
     st.session_state.last_results = results
     st.session_state.last_scan_time = datetime.now()
 
-    # ============================================================
-    # Détection des mouvements à notifier :
-    # - changement de catégorie (upgrade)
-    # - OU hausse de score significative
-    # avec un cooldown par ticker pour éviter le spam
-    # ============================================================
     now = datetime.now()
     to_alert = []
 
@@ -735,9 +722,9 @@ if should_scan:
 
             if not in_cooldown:
                 if bucket_upgrade:
-                    _, prev_label, _ = ("", {"red": "🔴 Rien à faire", "yellow": "🟡 À surveiller", "green": "🟢 Achat potentiel"}[prev_bucket], "")
-                    _, new_label, _ = ("", {"red": "🔴 Rien à faire", "yellow": "🟡 À surveiller", "green": "🟢 Achat potentiel"}[bucket_color], "")
-                    alert_reason = f"Changement de catégorie : {prev_label} → {new_label}"
+                    alert_reason = (
+                        f"Changement de catégorie : {BUCKET_TEXT[prev_bucket]} → {BUCKET_TEXT[bucket_color]}"
+                    )
                 elif score_jump >= score_jump_threshold:
                     alert_reason = f"Hausse de score significative : +{score_jump:.1f} pts"
 
@@ -750,7 +737,6 @@ if should_scan:
                 "prev_bucket": prev_bucket,
             })
 
-        # Mise à jour de l'état pour ce ticker
         new_state = {
             "score": r["score"],
             "bucket": bucket_color,
@@ -789,13 +775,9 @@ if results:
     if st.session_state.last_scan_time:
         st.caption(f"Dernier scan : {st.session_state.last_scan_time.strftime('%d/%m/%Y %H:%M:%S')}")
 
-    # ============================================================
-    # AFFICHAGE PAR CATEGORIE (trié par score décroissant)
-    # ============================================================
     df_results = pd.DataFrame(results).sort_values("score", ascending=False)
     categories = df_results["category"].unique()
 
-    # Onglet vue d'ensemble + par catégorie
     tab_overview, tab_categories = st.tabs(["📋 Vue d'ensemble", "🗂️ Par catégorie"])
 
     with tab_overview:
@@ -823,37 +805,40 @@ if results:
                         col = bar_color(points, max_points)
                         return f'<div class="bar-track"><div class="bar-fill" style="width:{pct:.0f}%; background:{col};"></div></div>'
 
-                    # Libellés fondamentaux (gèrent le cas où la donnée est indisponible)
-                    growth_label = f"Croissance CA {r['revenue_growth']*100:.1f}%" if r["revenue_growth"] is not None else "Croissance CA : N/A"
-                    margin_label = f"Marge brute {r['gross_margin']*100:.1f}%" if r["gross_margin"] is not None else "Marge brute : N/A"
-                    if r["profit_margin"] is not None:
+                    growth_label = f"Croissance CA {r['revenue_growth']*100:.1f}%" if pd.notna(r["revenue_growth"]) else "Croissance CA : N/A (neutre)"
+                    margin_label = f"Marge brute {r['gross_margin']*100:.1f}%" if pd.notna(r["gross_margin"]) else "Marge brute : N/A (neutre)"
+                    if pd.notna(r["profit_margin"]):
                         profit_check = "✔" if r["profit_margin"] > 0 else "✘"
                         profit_label = f"Rentable {profit_check} (marge nette {r['profit_margin']*100:.1f}%)"
                     else:
-                        profit_label = "Rentable : N/A"
+                        profit_label = "Rentable : N/A (neutre)"
+
+                    rsi_arrow = "↗" if r["rsi_delta3"] > 0 else "↘"
+                    rsi_label = f"RSI {r['rsi']:.0f} ({rsi_arrow}{r['rsi_delta3']:+.1f} /3j)"
+                    macd_label = f"MACD {r['macd_hist_pct']:+.2f}% (pente {r['macd_slope_pct']:+.2f})"
 
                     st.markdown(f"""
                     <div class="card card-{color}">
                         <div class="ticker-name">{r['ticker']} <span class="score-badge badge-{color}">{r['score']:.1f}/100</span></div>
                         <div class="ticker-sub">{r['name']}</div>
                         <div style="font-size:0.85rem; line-height:1.5;">
-                            <div class="crit-row"><span class="{crit_class(r['rsi_score'], 30)}">RSI {r['rsi']:.0f}</span><span>{r['rsi_score']:.1f}/30</span></div>
-                            {bar(r['rsi_score'], 30)}
-                            <div class="crit-row"><span class="{crit_class(r['macd_score'], 20)}">MACD hist. {r['macd_hist_pct']:+.2f}%</span><span>{r['macd_score']:.1f}/20</span></div>
-                            {bar(r['macd_score'], 20)}
-                            <div class="crit-row"><span class="{crit_class(r['vol_score'], 15)}">Volume x{r['vol_ratio']:.2f}</span><span>{r['vol_score']:.1f}/15</span></div>
-                            {bar(r['vol_score'], 15)}
-                            <div class="crit-row"><span class="{crit_class(r['drawdown_score'], 20)}">Baisse {r['drawdown_pct']:.1f}%</span><span>{r['drawdown_score']:.1f}/20</span></div>
-                            {bar(r['drawdown_score'], 20)}
-                            <div class="crit-row"><span class="{crit_class(r['support_score'], 15)}">Vs SMA50 {r['pct_vs_sma50']:+.1f}%</span><span>{r['support_score']:.1f}/15</span></div>
-                            {bar(r['support_score'], 15)}
-                            <div style="margin-top:6px; padding-top:6px; border-top:1px dashed #2a2f3a; color:#9aa0ab; font-size:0.75rem;">Fondamentaux</div>
-                            <div class="crit-row"><span class="{crit_class(r['growth_score'], 12)}">{growth_label}</span><span>{r['growth_score']:.0f}/12</span></div>
-                            {bar(r['growth_score'], 12)}
-                            <div class="crit-row"><span class="{crit_class(r['margin_score'], 10)}">{margin_label}</span><span>{r['margin_score']:.0f}/10</span></div>
-                            {bar(r['margin_score'], 10)}
-                            <div class="crit-row"><span class="{crit_class(r['profit_score'], 13)}">{profit_label}</span><span>{r['profit_score']:.0f}/13</span></div>
-                            {bar(r['profit_score'], 13)}
+                            <div class="crit-row"><span class="{crit_class(r['rsi_score'], MAX_RSI)}">{rsi_label}</span><span>{r['rsi_score']:.1f}/{MAX_RSI}</span></div>
+                            {bar(r['rsi_score'], MAX_RSI)}
+                            <div class="crit-row"><span class="{crit_class(r['macd_score'], MAX_MACD)}">{macd_label}</span><span>{r['macd_score']:.1f}/{MAX_MACD}</span></div>
+                            {bar(r['macd_score'], MAX_MACD)}
+                            <div class="crit-row"><span class="{crit_class(r['vol_score'], MAX_VOL)}">Volume x{r['vol_ratio']:.2f}</span><span>{r['vol_score']:.1f}/{MAX_VOL}</span></div>
+                            {bar(r['vol_score'], MAX_VOL)}
+                            <div class="crit-row"><span class="{crit_class(r['drawdown_score'], MAX_DRAWDOWN)}">Baisse {r['drawdown_pct']:.1f}%</span><span>{r['drawdown_score']:.1f}/{MAX_DRAWDOWN}</span></div>
+                            {bar(r['drawdown_score'], MAX_DRAWDOWN)}
+                            <div class="crit-row"><span class="{crit_class(r['support_score'], MAX_SUPPORT)}">Vs SMA50 {r['pct_vs_sma50']:+.1f}%</span><span>{r['support_score']:.1f}/{MAX_SUPPORT}</span></div>
+                            {bar(r['support_score'], MAX_SUPPORT)}
+                            <div style="margin-top:6px; padding-top:6px; border-top:1px dashed #2a2f3a; color:#9aa0ab; font-size:0.75rem;">Qualité (filtre)</div>
+                            <div class="crit-row"><span class="{crit_class(r['growth_score'], MAX_GROWTH)}">{growth_label}</span><span>{r['growth_score']:.1f}/{MAX_GROWTH}</span></div>
+                            {bar(r['growth_score'], MAX_GROWTH)}
+                            <div class="crit-row"><span class="{crit_class(r['margin_score'], MAX_MARGIN)}">{margin_label}</span><span>{r['margin_score']:.1f}/{MAX_MARGIN}</span></div>
+                            {bar(r['margin_score'], MAX_MARGIN)}
+                            <div class="crit-row"><span class="{crit_class(r['profit_score'], MAX_PROFIT)}">{profit_label}</span><span>{r['profit_score']:.1f}/{MAX_PROFIT}</span></div>
+                            {bar(r['profit_score'], MAX_PROFIT)}
                             <b>Prix actuel : {r['price']:.2f}</b>
                         </div>
                     </div>
