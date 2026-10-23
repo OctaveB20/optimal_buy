@@ -124,44 +124,63 @@ def persist_alert_state(ticker, state):
 
 st.markdown("""
 <style>
-    :root { color-scheme: dark; }
-    .stApp { background: radial-gradient(ellipse at 15% 0%, rgba(41,82,130,.18), transparent 36%), #0b0e14; }
-    .block-container { padding-top: 1.35rem; padding-bottom: 3rem; max-width: 1500px; }
-    [data-testid="stHeader"] { background: rgba(11,14,20,.72); }
-    [data-testid="stSidebar"] { background: linear-gradient(180deg,#101722,#0d1118); border-right: 1px solid #202a39; }
-    h1 { letter-spacing: -0.045em; font-weight: 800 !important; }
-    h2, h3 { letter-spacing: -0.025em; }
-    [data-testid="stMetric"] { background: linear-gradient(145deg,rgba(25,34,48,.92),rgba(17,23,33,.92)); border: 1px solid #263244; padding: 15px 17px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
-    [data-testid="stMetricLabel"] { color: #9eacc0; }
-    [data-testid="stMetricValue"] { font-weight: 750; letter-spacing: -.035em; }
+    /* Accessible, light dashboard: avoid forcing a dark color scheme. */
+    :root { color-scheme: light; }
+    .stApp {
+        background: radial-gradient(ellipse at 12% 0%, rgba(59,130,246,.07), transparent 34%), #f6f8fc;
+        color: #172033;
+    }
+    .block-container { padding-top: 1.25rem; padding-bottom: 3rem; max-width: 1500px; }
+    [data-testid="stHeader"] { background: rgba(246,248,252,.92); }
+    [data-testid="stSidebar"] { background: #ffffff; border-right: 1px solid #e4e9f2; }
+    [data-testid="stSidebar"] * { color: #253047; }
+    h1 { letter-spacing: -.04em; font-weight: 800 !important; color: #111827; }
+    h2, h3 { letter-spacing: -.025em; color: #172033; }
+    p, label, [data-testid="stMarkdownContainer"] { color: #273449; }
+    [data-testid="stMetric"] {
+        background: linear-gradient(145deg,#ffffff,#f8faff); border: 1px solid #e1e7f0;
+        padding: 15px 17px; border-radius: 16px; box-shadow: 0 5px 18px rgba(26,43,75,.045);
+    }
+    [data-testid="stMetricLabel"] { color: #64748b !important; }
+    [data-testid="stMetricValue"] { color: #111827 !important; font-weight: 750; letter-spacing: -.035em; }
     [data-testid="stTabs"] button { border-radius: 10px 10px 0 0; padding-top: .65rem; padding-bottom: .65rem; }
-    [data-testid="stExpander"] { border: 1px solid #273246; border-radius: 15px; background: rgba(17,23,33,.55); }
-    [data-testid="stVerticalBlockBorderWrapper"] { border-color: #293548 !important; border-radius: 18px !important; background: rgba(16,22,32,.7); }
-    div.stButton > button { border-radius: 10px; transition: all .18s ease; border-color: #334155; }
-    div.stButton > button:hover { border-color: #60a5fa; color: #bfdbfe; transform: translateY(-1px); }
-    [data-testid="stTextInput"] input, [data-testid="stSelectbox"] div, [data-testid="stMultiSelect"] div { border-radius: 10px; }
+    [data-testid="stExpander"] { border: 1px solid #e1e7f0; border-radius: 14px; background: #ffffff; }
+    [data-testid="stVerticalBlockBorderWrapper"] { border-color: #e1e7f0 !important; border-radius: 16px !important; background: rgba(255,255,255,.92); }
+    div.stButton > button {
+        border-radius: 10px; border: 1px solid #d7dfeb; transition: all .16s ease;
+        min-height: 2.55rem; font-weight: 600;
+    }
+    div.stButton > button:hover { border-color: #7aa7ef; color: #1d4ed8; transform: translateY(-1px); }
+    [data-testid="stTextInput"] input, [data-testid="stNumberInput"] input,
+    [data-testid="stSelectbox"] [role="combobox"], [data-testid="stMultiSelect"] [role="combobox"] {
+        border-radius: 10px;
+    }
     .score-badge { display:inline-flex; align-items:center; justify-content:center; padding:5px 11px; border-radius:999px; font-weight:750; font-size:.82rem; white-space:nowrap; }
-    .badge-green { background:rgba(34,197,94,.14); color:#4ade80; border:1px solid rgba(74,222,128,.25); }
-    .badge-yellow { background:rgba(234,179,8,.13); color:#facc15; border:1px solid rgba(250,204,21,.23); }
-    .badge-red { background:rgba(248,113,113,.12); color:#fca5a5; border:1px solid rgba(248,113,113,.23); }
-    .stock-card { background:linear-gradient(135deg,rgba(24,33,47,.97),rgba(15,20,29,.97)); border:1px solid #293548; border-radius:17px; padding:17px 19px 13px; margin:8px 0 13px; box-shadow:0 8px 25px rgba(0,0,0,.12); transition:border-color .18s ease, transform .18s ease; }
-    .stock-card:hover { border-color:#425675; transform:translateY(-1px); }
+    .badge-green { background:#dcfce7; color:#166534; border:1px solid #bbf7d0; }
+    .badge-yellow { background:#fef3c7; color:#92400e; border:1px solid #fde68a; }
+    .badge-red { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
+    .stock-card {
+        background: linear-gradient(135deg,#ffffff,#f9fbff); border:1px solid #e3e9f2;
+        border-radius:16px; padding:17px 19px 13px; margin:8px 0 7px;
+        box-shadow:0 5px 18px rgba(26,43,75,.045); transition:border-color .16s ease, box-shadow .16s ease;
+    }
+    .stock-card:hover { border-color:#b8cbea; box-shadow:0 8px 24px rgba(26,43,75,.075); }
     .stock-card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
-    .stock-ticker { font-size:1.08rem; font-weight:800; color:#f1f5f9; letter-spacing:-.02em; }
-    .stock-company { font-size:.84rem; color:#9aa9bd; margin-top:2px; }
+    .stock-ticker { font-size:1.08rem; font-weight:800; color:#172033; letter-spacing:-.02em; }
+    .stock-company { font-size:.84rem; color:#64748b; margin-top:2px; }
     .stock-meta { display:flex; flex-wrap:wrap; gap:7px; margin-top:8px; }
-    .stock-chip { background:#202b3a; color:#b9c6d8; border:1px solid #2d3a4d; border-radius:7px; padding:4px 8px; font-size:.75rem; }
+    .stock-chip { background:#f1f5f9; color:#475569; border:1px solid #e2e8f0; border-radius:7px; padding:4px 8px; font-size:.75rem; }
     .stock-bars { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
-    .stock-bar-label { display:flex; justify-content:space-between; gap:8px; color:#a9b6c8; font-size:.76rem; margin-bottom:6px; }
-    .stock-track { height:7px; border-radius:99px; background:#293444; overflow:hidden; }
+    .stock-bar-label { display:flex; justify-content:space-between; gap:8px; color:#64748b; font-size:.76rem; margin-bottom:6px; }
+    .stock-track { height:7px; border-radius:99px; background:#e8edf5; overflow:hidden; }
     .stock-fill { height:100%; border-radius:99px; }
-    .stock-foot { display:flex; flex-wrap:wrap; gap:16px; color:#8fa0b6; font-size:.78rem; margin-top:13px; padding-top:10px; border-top:1px solid #263244; }
-    .detail-row { display:grid; grid-template-columns:minmax(140px,1.2fr) minmax(100px,2fr) 65px; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid rgba(57,72,94,.42); }
-    .detail-label { color:#c4cfdd; font-size:.86rem; }
-    .detail-track { height:8px; background:#293444; border-radius:99px; overflow:hidden; }
-    .detail-value { text-align:right; color:#e6edf6; font-size:.83rem; font-variant-numeric:tabular-nums; }
-    .section-kicker { color:#7f9bbb; text-transform:uppercase; letter-spacing:.12em; font-size:.7rem; font-weight:750; }
-    @media (max-width: 700px) { .stock-bars { grid-template-columns:1fr; gap:9px; } .stock-card { padding:14px; } .detail-row { grid-template-columns: minmax(105px,1fr) minmax(70px,1fr) 55px; gap:8px; } }
+    .stock-foot { display:flex; flex-wrap:wrap; gap:16px; color:#64748b; font-size:.78rem; margin-top:13px; padding-top:10px; border-top:1px solid #e8edf5; }
+    .detail-row { display:grid; grid-template-columns:minmax(140px,1.2fr) minmax(100px,2fr) 65px; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid #edf1f7; }
+    .detail-label { color:#475569; font-size:.86rem; }
+    .detail-track { height:8px; background:#e8edf5; border-radius:99px; overflow:hidden; }
+    .detail-value { text-align:right; color:#172033; font-size:.83rem; font-variant-numeric:tabular-nums; }
+    .section-kicker { color:#64748b; text-transform:uppercase; letter-spacing:.12em; font-size:.7rem; font-weight:750; }
+    @media (max-width: 700px) { .stock-bars { grid-template-columns:1fr; gap:9px; } .stock-card { padding:14px; } .detail-row { grid-template-columns:minmax(105px,1fr) minmax(70px,1fr) 55px; gap:8px; } }
 </style>
 """, unsafe_allow_html=True)
 
@@ -719,9 +738,9 @@ def render_stock_details(r: dict):
         ratio = max(0, min(100, float(points) / maximum * 100 if maximum else 0))
         bar_color = "#4ade80" if ratio >= 70 else "#facc15" if ratio >= 40 else "#64748b"
         st.markdown(
-            f"<div class='detail-row'><div><div class='detail-label'>{label}</div><div style='font-size:.72rem;color:#718198;margin-top:2px'>{explanation}</div></div>"
+            f"<div class='detail-row'><div><div class='detail-label'>{label}</div><div style='font-size:.72rem;color:#94a3b8;margin-top:2px'>{explanation}</div></div>"
             f"<div class='detail-track'><div class='stock-fill' style='width:{ratio:.1f}%;background:{bar_color}'></div></div>"
-            f"<div class='detail-value'>{points:.1f}<span style='color:#718198'>/{maximum}</span></div></div>",
+            f"<div class='detail-value'>{points:.1f}<span style='color:#94a3b8'>/{maximum}</span></div></div>",
             unsafe_allow_html=True,
         )
 
@@ -745,7 +764,7 @@ def render_stock_details(r: dict):
         with metric_cols[idx % 2]:
             st.markdown(
                 f"<div style='display:flex;justify-content:space-between;gap:12px;padding:10px 12px;margin:0 0 8px;border:1px solid #263244;border-radius:10px;background:rgba(24,33,47,.55)'>"
-                f"<span style='color:#9eacc0;font-size:.82rem'>{metric_name}</span><strong style='color:#e5edf7;font-size:.86rem;text-align:right'>{metric_value}</strong></div>",
+                f"<span style='color:#9eacc0;font-size:.82rem'>{metric_name}</span><strong style='color:#172033;font-size:.86rem;text-align:right'>{metric_value}</strong></div>",
                 unsafe_allow_html=True,
             )
     st.caption(tr("Les données indisponibles sont affichées N/A et reçoivent un score fondamental neutre dans le modèle.", "Unavailable data is shown as N/A and receives a neutral fundamental score in this model."))
@@ -1149,15 +1168,15 @@ if results:
             vol_pct = max(0, min(100, float(r["vol_ratio"]) / 3 * 100))
             vol_color = "#4ade80" if r["vol_ratio"] >= 1.5 else "#facc15" if r["vol_ratio"] >= 1 else "#64748b"
             st.markdown(
-                f"<div class='stock-card'><div class='stock-card-top'><div><div class='stock-ticker'>{r['ticker']} <span style='font-weight:500;color:#718198'>·</span> {r['name']}</div>"
+                f"<div class='stock-card'><div class='stock-card-top'><div><div class='stock-ticker'>{r['ticker']} <span style='font-weight:500;color:#94a3b8'>·</span> {r['name']}</div>"
                 f"<div class='stock-company'>{translated_category(r['category'])}</div></div>"
                 f"<div style='text-align:right'><span class='score-badge badge-{color}'>{r['score']:.1f}/100</span><div style='font-size:.75rem;color:{score_color};margin-top:6px'>{label}</div></div></div>"
                 f"<div class='stock-bars'>"
-                f"<div><div class='stock-bar-label'><span>{tr('Score global', 'Overall score')}</span><strong style='color:#e5edf7'>{score_pct:.0f}%</strong></div><div class='stock-track'><div class='stock-fill' style='width:{score_pct}%;background:{score_color}'></div></div></div>"
-                f"<div><div class='stock-bar-label'><span>RSI (14)</span><strong style='color:#e5edf7'>{r['rsi']:.0f}/100</strong></div><div class='stock-track'><div class='stock-fill' style='width:{rsi_pct}%;background:{rsi_color}'></div></div></div>"
-                f"<div><div class='stock-bar-label'><span>{tr('Volume relatif', 'Relative volume')}</span><strong style='color:#e5edf7'>{r['vol_ratio']:.2f}x</strong></div><div class='stock-track'><div class='stock-fill' style='width:{vol_pct}%;background:{vol_color}'></div></div></div></div>"
-                f"<div class='stock-foot'><span>💵 {tr('Prix', 'Price')}: <strong style='color:#dce6f3'>{r['price']:.2f}</strong></span>"
-                f"<span>↘ {tr('Baisse 6 mois', '6-month drop')}: <strong style='color:#dce6f3'>{r['drawdown_pct']:.1f}%</strong></span>"
+                f"<div><div class='stock-bar-label'><span>{tr('Score global', 'Overall score')}</span><strong style='color:#172033'>{score_pct:.0f}%</strong></div><div class='stock-track'><div class='stock-fill' style='width:{score_pct}%;background:{score_color}'></div></div></div>"
+                f"<div><div class='stock-bar-label'><span>RSI (14)</span><strong style='color:#172033'>{r['rsi']:.0f}/100</strong></div><div class='stock-track'><div class='stock-fill' style='width:{rsi_pct}%;background:{rsi_color}'></div></div></div>"
+                f"<div><div class='stock-bar-label'><span>{tr('Volume relatif', 'Relative volume')}</span><strong style='color:#172033'>{r['vol_ratio']:.2f}x</strong></div><div class='stock-track'><div class='stock-fill' style='width:{vol_pct}%;background:{vol_color}'></div></div></div></div>"
+                f"<div class='stock-foot'><span>💵 {tr('Prix', 'Price')}: <strong style='color:#334155'>{r['price']:.2f}</strong></span>"
+                f"<span>↘ {tr('Baisse 6 mois', '6-month drop')}: <strong style='color:#334155'>{r['drawdown_pct']:.1f}%</strong></span>"
                 f"<span>📈 MACD: <strong style='color:{'#4ade80' if r['macd_bullish'] else '#fca5a5'}'>{tr('Haussier', 'Bullish') if r['macd_bullish'] else tr('Non haussier', 'Not bullish')}</strong></span></div></div>",
                 unsafe_allow_html=True,
             )
