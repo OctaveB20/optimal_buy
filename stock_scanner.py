@@ -23,7 +23,7 @@ Lancement :
     streamlit run stock_scanner.py
 
 Configuration : secrets Streamlit SUPABASE_URL, SUPABASE_KEY, RESEND_API_KEY,
-RESEND_FROM_EMAIL, ANTHROPIC_API_KEY (chatbot), ANTHROPIC_MODEL (optionnel).
+RESEND_FROM_EMAIL, GROQ_API_KEY (chatbot), GROQ_MODEL (optionnel).
 """
 
 from datetime import datetime, date
@@ -57,8 +57,8 @@ SUPABASE_URL = get_setting("SUPABASE_URL")
 SUPABASE_KEY = get_setting("SUPABASE_KEY")
 RESEND_API_KEY = get_setting("RESEND_API_KEY")
 RESEND_FROM_EMAIL = get_setting("RESEND_FROM_EMAIL")
-ANTHROPIC_API_KEY = get_setting("ANTHROPIC_API_KEY")
-ANTHROPIC_MODEL = get_setting("ANTHROPIC_MODEL", "claude-sonnet-5-5") or "claude-sonnet-5-5"
+GROQ_API_KEY = get_setting("GROQ_API_KEY")
+GROQ_MODEL = get_setting("GROQ_MODEL", "openai/gpt-oss-20b") or "openai/gpt-oss-20b"
 
 @st.cache_resource
 def get_supabase_client():
@@ -659,36 +659,60 @@ CHAT_SYSTEM_PROMPT = (
 )
 
 
-def _anthropic_request(system: str, messages: list, use_web: bool):
-    body = {"model": ANTHROPIC_MODEL, "max_tokens": 1500, "system": system, "messages": messages}
+def _groq_request(system: str, messages: list, use_web: bool):
+    """Appelle Groq Chat Completions, avec recherche web intégrée en option."""
+    api_messages = [{"role": "system", "content": system}] + messages
+    body = {
+        "model": GROQ_MODEL,
+        "max_completion_tokens": 1500,
+        "messages": api_messages,
+    }
     if use_web:
-        body["tools"] = [{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}]
+        # Le modèle GPT-OSS de Groq prend en charge browser_search.
+        body["tools"] = [{"type": "browser_search"}]
     return requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers={"x-api-key": ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json"},
-        json=body, timeout=90,
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json=body,
+        timeout=90,
     )
 
 
-def ask_claude(r: dict, history: list, use_web: bool):
-    """Appelle l'API Claude avec le contexte du titre. Renvoie (texte, erreur)."""
-    if not ANTHROPIC_API_KEY:
-        return None, "Configure ANTHROPIC_API_KEY dans les secrets pour activer le chatbot."
+def ask_groq(r: dict, history: list, use_web: bool):
+    """Appelle Groq avec le contexte du titre. Renvoie (texte, erreur)."""
+    if not GROQ_API_KEY:
+        return None, "Configure GROQ_API_KEY dans les secrets Streamlit pour activer le chatbot."
+
     msgs = [{"role": m["role"], "content": m["content"]} for m in history[-12:]]
     while msgs and msgs[0]["role"] != "user":
         msgs.pop(0)
+
     system = CHAT_SYSTEM_PROMPT + "\n\nDONNÉES DU TITRE SÉLECTIONNÉ :\n" + build_stock_context(r)
+    if use_web:
+        system += "\nLa recherche web est activée : utilise-la pour vérifier les actualités récentes pertinentes et cite brièvement les sources dans ta réponse."
+    else:
+        system += "\nLa recherche web est désactivée : ne prétends pas avoir vérifié les actualités en direct et précise cette limite si la question en dépend."
+
     try:
-        resp = _anthropic_request(system, msgs, use_web)
+        resp = _groq_request(system, msgs, use_web)
+        # Si browser_search échoue (modèle/outil indisponible), retenter sans outil web.
         if not resp.ok and use_web:
-            resp = _anthropic_request(system, msgs, False)  # recherche web indisponible : on réessaie sans
+            system_without_web = system.replace(
+                "La recherche web est activée : utilise-la pour vérifier les actualités récentes pertinentes et cite brièvement les sources dans ta réponse.",
+                "La recherche web n'a pas fonctionné pour cette requête : ne prétends pas avoir vérifié les actualités en direct et précise cette limite si la question en dépend."
+            )
+            resp = _groq_request(system_without_web, msgs, False)
         if not resp.ok:
-            return None, f"API Claude HTTP {resp.status_code}: {resp.text[:400]}"
-        blocks = resp.json().get("content", [])
-        text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text").strip()
-        return (text or None), (None if text else "Réponse vide de l'API.")
+            return None, f"API Groq HTTP {resp.status_code}: {resp.text[:400]}"
+
+        choices = resp.json().get("choices", [])
+        answer = choices[0].get("message", {}).get("content", "").strip() if choices else ""
+        return (answer or None), (None if answer else "Réponse vide de l'API Groq.")
     except Exception as exc:
-        return None, str(exc)
+        return None, f"Erreur lors de l'appel à Groq : {exc}"
 
 
 def safe_md(text: str) -> str:
@@ -754,11 +778,11 @@ with st.sidebar:
     st.divider()
     st.subheader("🤖 Chatbot")
     chat_web_search = st.checkbox("Autoriser la recherche web (actualités)", value=True,
-                                  help="Permet au chatbot de chercher les actualités récentes du titre. Si l'option n'est pas activée sur ton compte API, il répond sans.")
-    if not ANTHROPIC_API_KEY:
-        st.warning("Configure ANTHROPIC_API_KEY dans les secrets pour activer le chatbot.")
+                                  help="Utilise l'outil browser_search de Groq pour les actualités récentes. Si la recherche échoue, le chatbot réessaie sans.")
+    if not GROQ_API_KEY:
+        st.warning("Configure GROQ_API_KEY dans les secrets pour activer le chatbot.")
     else:
-        st.caption(f"Modèle : {ANTHROPIC_MODEL}")
+        st.caption(f"Modèle Groq : {GROQ_MODEL}")
 
     st.divider()
     st.subheader("🔄 Scan automatique")
@@ -1018,7 +1042,7 @@ if results:
 
         b1, b2, _sp = st.columns([2, 2, 4])
         analyze_clicked = b1.button("🧠 Analyse court terme", key=f"analyze_{selected}",
-                                    disabled=not ANTHROPIC_API_KEY, use_container_width=True)
+                                    disabled=not GROQ_API_KEY, use_container_width=True)
         if b2.button("🗑️ Effacer la conversation", key=f"clear_{selected}", use_container_width=True):
             histories[selected] = []
             st.rerun()
@@ -1028,8 +1052,8 @@ if results:
                 st.markdown(safe_md(msg["content"]))
 
         user_prompt = st.chat_input(
-            f"Pose une question sur {selected}..." if ANTHROPIC_API_KEY else "Chatbot indisponible : ANTHROPIC_API_KEY manquante",
-            disabled=not ANTHROPIC_API_KEY, key="chat_input_box",
+            f"Pose une question sur {selected}..." if GROQ_API_KEY else "Chatbot indisponible : GROQ_API_KEY manquante",
+            disabled=not GROQ_API_KEY, key="chat_input_box",
         )
         pending = None
         if analyze_clicked:
@@ -1044,7 +1068,7 @@ if results:
                 st.markdown(safe_md(pending))
             with st.chat_message("assistant"):
                 with st.spinner("Analyse en cours..."):
-                    answer, err = ask_claude(r, history, chat_web_search)
+                    answer, err = ask_groq(r, history, chat_web_search)
                 if answer:
                     st.markdown(safe_md(answer))
                     history.append({"role": "assistant", "content": answer})
