@@ -42,7 +42,7 @@ try:
 except ImportError:
     AUTOREFRESH_AVAILABLE = False
 
-st.set_page_config(page_title="Stock Opportunity Scanner", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Stock Opportunity Scanner", page_icon="📈", layout="wide", initial_sidebar_state="expanded")
 
 # ============================================================
 # CONFIGURATION PERSISTANTE SUPABASE + EMAIL RESEND
@@ -124,32 +124,44 @@ def persist_alert_state(ticker, state):
 
 st.markdown("""
 <style>
-    .main { background-color: #0e1117; }
-    .block-container { padding-top: 2rem; }
-    .card {
-        background: linear-gradient(145deg, #161a23, #1c2029);
-        border: 1px solid #2a2f3a; border-radius: 14px;
-        padding: 16px 18px; margin-bottom: 14px;
-    }
-    .card-green { border-left: 5px solid #22c55e; }
-    .card-yellow { border-left: 5px solid #eab308; }
-    .card-red { border-left: 5px solid #ef4444; }
-    .ticker-name { font-size: 1.05rem; font-weight: 700; color: #f5f5f5; }
-    .ticker-sub { font-size: 0.78rem; color: #9aa0ab; margin-bottom: 6px; }
-    .score-badge { display: inline-block; padding: 3px 12px; border-radius: 999px; font-weight: 700; font-size: 0.85rem; }
-    .badge-green { background: rgba(34,197,94,0.18); color: #4ade80; }
-    .badge-yellow { background: rgba(234,179,8,0.18); color: #facc15; }
-    .badge-red { background: rgba(239,68,68,0.18); color: #f87171; }
-    .crit-row { display: flex; justify-content: space-between; font-size: 0.82rem; }
-    .crit-ok { color: #4ade80; }
-    .crit-mid { color: #facc15; }
-    .crit-ko { color: #6b7280; }
-    .bar-track { background: #262b36; border-radius: 6px; height: 6px; width: 100%; margin: 2px 0 8px 0; overflow: hidden; }
-    .bar-fill { height: 100%; border-radius: 6px; }
-    .section-title {
-        font-size: 1.15rem; font-weight: 700; color: #e5e7eb;
-        margin: 22px 0 10px 0; border-bottom: 1px solid #2a2f3a; padding-bottom: 6px;
-    }
+    :root { color-scheme: dark; }
+    .stApp { background: radial-gradient(ellipse at 15% 0%, rgba(41,82,130,.18), transparent 36%), #0b0e14; }
+    .block-container { padding-top: 1.35rem; padding-bottom: 3rem; max-width: 1500px; }
+    [data-testid="stHeader"] { background: rgba(11,14,20,.72); }
+    [data-testid="stSidebar"] { background: linear-gradient(180deg,#101722,#0d1118); border-right: 1px solid #202a39; }
+    h1 { letter-spacing: -0.045em; font-weight: 800 !important; }
+    h2, h3 { letter-spacing: -0.025em; }
+    [data-testid="stMetric"] { background: linear-gradient(145deg,rgba(25,34,48,.92),rgba(17,23,33,.92)); border: 1px solid #263244; padding: 15px 17px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,.12); }
+    [data-testid="stMetricLabel"] { color: #9eacc0; }
+    [data-testid="stMetricValue"] { font-weight: 750; letter-spacing: -.035em; }
+    [data-testid="stTabs"] button { border-radius: 10px 10px 0 0; padding-top: .65rem; padding-bottom: .65rem; }
+    [data-testid="stExpander"] { border: 1px solid #273246; border-radius: 15px; background: rgba(17,23,33,.55); }
+    [data-testid="stVerticalBlockBorderWrapper"] { border-color: #293548 !important; border-radius: 18px !important; background: rgba(16,22,32,.7); }
+    div.stButton > button { border-radius: 10px; transition: all .18s ease; border-color: #334155; }
+    div.stButton > button:hover { border-color: #60a5fa; color: #bfdbfe; transform: translateY(-1px); }
+    [data-testid="stTextInput"] input, [data-testid="stSelectbox"] div, [data-testid="stMultiSelect"] div { border-radius: 10px; }
+    .score-badge { display:inline-flex; align-items:center; justify-content:center; padding:5px 11px; border-radius:999px; font-weight:750; font-size:.82rem; white-space:nowrap; }
+    .badge-green { background:rgba(34,197,94,.14); color:#4ade80; border:1px solid rgba(74,222,128,.25); }
+    .badge-yellow { background:rgba(234,179,8,.13); color:#facc15; border:1px solid rgba(250,204,21,.23); }
+    .badge-red { background:rgba(248,113,113,.12); color:#fca5a5; border:1px solid rgba(248,113,113,.23); }
+    .stock-card { background:linear-gradient(135deg,rgba(24,33,47,.97),rgba(15,20,29,.97)); border:1px solid #293548; border-radius:17px; padding:17px 19px 13px; margin:8px 0 13px; box-shadow:0 8px 25px rgba(0,0,0,.12); transition:border-color .18s ease, transform .18s ease; }
+    .stock-card:hover { border-color:#425675; transform:translateY(-1px); }
+    .stock-card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px; }
+    .stock-ticker { font-size:1.08rem; font-weight:800; color:#f1f5f9; letter-spacing:-.02em; }
+    .stock-company { font-size:.84rem; color:#9aa9bd; margin-top:2px; }
+    .stock-meta { display:flex; flex-wrap:wrap; gap:7px; margin-top:8px; }
+    .stock-chip { background:#202b3a; color:#b9c6d8; border:1px solid #2d3a4d; border-radius:7px; padding:4px 8px; font-size:.75rem; }
+    .stock-bars { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+    .stock-bar-label { display:flex; justify-content:space-between; gap:8px; color:#a9b6c8; font-size:.76rem; margin-bottom:6px; }
+    .stock-track { height:7px; border-radius:99px; background:#293444; overflow:hidden; }
+    .stock-fill { height:100%; border-radius:99px; }
+    .stock-foot { display:flex; flex-wrap:wrap; gap:16px; color:#8fa0b6; font-size:.78rem; margin-top:13px; padding-top:10px; border-top:1px solid #263244; }
+    .detail-row { display:grid; grid-template-columns:minmax(140px,1.2fr) minmax(100px,2fr) 65px; align-items:center; gap:12px; padding:9px 0; border-bottom:1px solid rgba(57,72,94,.42); }
+    .detail-label { color:#c4cfdd; font-size:.86rem; }
+    .detail-track { height:8px; background:#293444; border-radius:99px; overflow:hidden; }
+    .detail-value { text-align:right; color:#e6edf6; font-size:.83rem; font-variant-numeric:tabular-nums; }
+    .section-kicker { color:#7f9bbb; text-transform:uppercase; letter-spacing:.12em; font-size:.7rem; font-weight:750; }
+    @media (max-width: 700px) { .stock-bars { grid-template-columns:1fr; gap:9px; } .stock-card { padding:14px; } .detail-row { grid-template-columns: minmax(105px,1fr) minmax(70px,1fr) 55px; gap:8px; } }
 </style>
 """, unsafe_allow_html=True)
 
@@ -703,14 +715,15 @@ def render_stock_details(r: dict):
         (tr("Marge brute", "Gross margin"), r.get("margin_score", 0), MAX_MARGIN, tr("Rentabilité après coûts directs", "Profitability after direct costs")),
         (tr("Marge nette", "Net margin"), r.get("profit_score", 0), MAX_PROFIT, tr("Part du chiffre d’affaires conservée en bénéfice net", "Share of revenue retained as net profit")),
     ]
-    score_rows = []
     for label, points, maximum, explanation in components:
-        score_rows.append({
-            tr("Critère", "Factor"): label,
-            tr("Points", "Points"): f"{points:.1f} / {maximum}",
-            tr("Interprétation", "What it measures"): explanation,
-        })
-    st.dataframe(pd.DataFrame(score_rows), use_container_width=True, hide_index=True)
+        ratio = max(0, min(100, float(points) / maximum * 100 if maximum else 0))
+        bar_color = "#4ade80" if ratio >= 70 else "#facc15" if ratio >= 40 else "#64748b"
+        st.markdown(
+            f"<div class='detail-row'><div><div class='detail-label'>{label}</div><div style='font-size:.72rem;color:#718198;margin-top:2px'>{explanation}</div></div>"
+            f"<div class='detail-track'><div class='stock-fill' style='width:{ratio:.1f}%;background:{bar_color}'></div></div>"
+            f"<div class='detail-value'>{points:.1f}<span style='color:#718198'>/{maximum}</span></div></div>",
+            unsafe_allow_html=True,
+        )
 
     st.markdown(tr("#### Indicateurs et données fondamentales", "#### Indicators and fundamentals"))
     def pct_or_na(value):
@@ -727,8 +740,14 @@ def render_stock_details(r: dict):
         (tr("Marge brute", "Gross margin"), pct_or_na(r.get("gross_margin"))),
         (tr("Marge nette", "Net margin"), pct_or_na(r.get("profit_margin"))),
     ]
-    mdf = pd.DataFrame(metrics, columns=[tr("Indicateur", "Metric"), tr("Valeur", "Value")])
-    st.dataframe(mdf, use_container_width=True, hide_index=True)
+    metric_cols = st.columns(2)
+    for idx, (metric_name, metric_value) in enumerate(metrics):
+        with metric_cols[idx % 2]:
+            st.markdown(
+                f"<div style='display:flex;justify-content:space-between;gap:12px;padding:10px 12px;margin:0 0 8px;border:1px solid #263244;border-radius:10px;background:rgba(24,33,47,.55)'>"
+                f"<span style='color:#9eacc0;font-size:.82rem'>{metric_name}</span><strong style='color:#e5edf7;font-size:.86rem;text-align:right'>{metric_value}</strong></div>",
+                unsafe_allow_html=True,
+            )
     st.caption(tr("Les données indisponibles sont affichées N/A et reçoivent un score fondamental neutre dans le modèle.", "Unavailable data is shown as N/A and receives a neutral fundamental score in this model."))
 
 
@@ -1123,20 +1142,32 @@ if results:
 
         for _, r in fdf.iterrows():
             color, label = score_bucket(r["score"])
-            cols = st.columns([2.8, 1, 0.8, 1, 1, 1, 1.2])
-            cols[0].markdown(f"**{r['ticker']}** — {r['name']}  \n<span style='color:#9aa0ab;font-size:0.8rem'>{translated_category(r['category'])}</span>", unsafe_allow_html=True)
-            cols[1].markdown(f"<span class='score-badge badge-{color}'>{r['score']:.1f}/100</span>", unsafe_allow_html=True)
-            cols[2].markdown(f"RSI: **{r['rsi']:.0f}**")
-            cols[3].markdown(f"{tr('Prix', 'Price')}: **{r['price']:.2f}**")
-            cols[4].markdown(f"{tr('Baisse', 'Drop')}: **{r['drawdown_pct']:.1f}%**")
-            cols[5].markdown(label)
-            cols[6].button(
-                tr("Détails ↗", "Details ↗"),
+            score_pct = max(0, min(100, float(r["score"])))
+            score_color = {"green": "#4ade80", "yellow": "#facc15", "red": "#fb7185"}.get(color, "#60a5fa")
+            rsi_pct = max(0, min(100, float(r["rsi"])))
+            rsi_color = "#4ade80" if 25 <= rsi_pct <= 40 else "#facc15" if rsi_pct < 55 else "#fb7185"
+            vol_pct = max(0, min(100, float(r["vol_ratio"]) / 3 * 100))
+            vol_color = "#4ade80" if r["vol_ratio"] >= 1.5 else "#facc15" if r["vol_ratio"] >= 1 else "#64748b"
+            st.markdown(
+                f"<div class='stock-card'><div class='stock-card-top'><div><div class='stock-ticker'>{r['ticker']} <span style='font-weight:500;color:#718198'>·</span> {r['name']}</div>"
+                f"<div class='stock-company'>{translated_category(r['category'])}</div></div>"
+                f"<div style='text-align:right'><span class='score-badge badge-{color}'>{r['score']:.1f}/100</span><div style='font-size:.75rem;color:{score_color};margin-top:6px'>{label}</div></div></div>"
+                f"<div class='stock-bars'>"
+                f"<div><div class='stock-bar-label'><span>{tr('Score global', 'Overall score')}</span><strong style='color:#e5edf7'>{score_pct:.0f}%</strong></div><div class='stock-track'><div class='stock-fill' style='width:{score_pct}%;background:{score_color}'></div></div></div>"
+                f"<div><div class='stock-bar-label'><span>RSI (14)</span><strong style='color:#e5edf7'>{r['rsi']:.0f}/100</strong></div><div class='stock-track'><div class='stock-fill' style='width:{rsi_pct}%;background:{rsi_color}'></div></div></div>"
+                f"<div><div class='stock-bar-label'><span>{tr('Volume relatif', 'Relative volume')}</span><strong style='color:#e5edf7'>{r['vol_ratio']:.2f}x</strong></div><div class='stock-track'><div class='stock-fill' style='width:{vol_pct}%;background:{vol_color}'></div></div></div></div>"
+                f"<div class='stock-foot'><span>💵 {tr('Prix', 'Price')}: <strong style='color:#dce6f3'>{r['price']:.2f}</strong></span>"
+                f"<span>↘ {tr('Baisse 6 mois', '6-month drop')}: <strong style='color:#dce6f3'>{r['drawdown_pct']:.1f}%</strong></span>"
+                f"<span>📈 MACD: <strong style='color:{'#4ade80' if r['macd_bullish'] else '#fca5a5'}'>{tr('Haussier', 'Bullish') if r['macd_bullish'] else tr('Non haussier', 'Not bullish')}</strong></span></div></div>",
+                unsafe_allow_html=True,
+            )
+            _, detail_col = st.columns([5, 1.2])
+            detail_col.button(
+                tr("Voir l'analyse complète ↗", "Open full analysis ↗"),
                 key=f"details_{r['ticker']}",
                 use_container_width=True,
                 on_click=lambda ticker=r["ticker"]: st.session_state.update(selected_detail_ticker=ticker),
             )
-            st.divider()
 
     # ---------------- CHATBOT ----------------
     with tab_chat:
