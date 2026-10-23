@@ -164,7 +164,7 @@ def tr(fr, en):
     return en if IS_EN else fr
 
 st.title("📈 Stock Opportunity Scanner")
-st.caption(tr("Détection automatique des meilleurs moments d'achat sur ta watchlist", "Automatically detect potential buying opportunities in your watchlist"))
+st.caption(tr("Détection automatique des meilleurs moments d'achat sur ta watchlist premium", "Automatically detect potential buying opportunities in your premium watchlist"))
 
 # ============================================================
 # WATCHLIST
@@ -1107,19 +1107,7 @@ if results:
         st.caption(tr(f"{len(fdf)} résultat(s) sur {len(df_results)}", f"{len(fdf)} result(s) out of {len(df_results)}"))
         if fdf.empty:
             st.info(tr("Aucune action ne correspond à ces critères. Assouplis un filtre ou clique sur Réinitialiser.", "No stocks match these criteria. Loosen a filter or click Reset."))
-        for _, r in fdf.iterrows():
-            color, label = score_bucket(r["score"])
-            cols = st.columns([2.8, 1, 0.8, 1, 1, 1.2, 1.1])
-            cols[0].markdown(f"**{r['ticker']}** — {r['name']}  \n<span style='color:#9aa0ab;font-size:0.8rem'>{translated_category(r['category'])}</span>", unsafe_allow_html=True)
-            cols[1].markdown(f"<span class='score-badge badge-{color}'>{r['score']:.1f}/100</span>", unsafe_allow_html=True)
-            cols[2].markdown(f"RSI: **{r['rsi']:.0f}**")
-            cols[3].markdown(f"{tr('Prix', 'Price')}: **{r['price']:.2f}**")
-            cols[4].markdown(f"{tr('Baisse', 'Drop')}: **{r['drawdown_pct']:.1f}%**")
-            cols[5].markdown(label)
-            if cols[6].button(tr("Détails ↗", "Details ↗"), key=f"details_{r['ticker']}", use_container_width=True):
-                st.session_state.selected_detail_ticker = r['ticker']
-            st.divider()
-
+        # Show details above the list so the panel is immediately visible after a click.
         selected_detail = st.session_state.get("selected_detail_ticker")
         available_tickers = set(df_results["ticker"].tolist())
         if selected_detail in available_tickers:
@@ -1131,6 +1119,24 @@ if results:
                     st.session_state.selected_detail_ticker = None
                     st.rerun()
                 render_stock_details(detail_record)
+            st.divider()
+
+        for _, r in fdf.iterrows():
+            color, label = score_bucket(r["score"])
+            cols = st.columns([2.8, 1, 0.8, 1, 1, 1, 1.2])
+            cols[0].markdown(f"**{r['ticker']}** — {r['name']}  \n<span style='color:#9aa0ab;font-size:0.8rem'>{translated_category(r['category'])}</span>", unsafe_allow_html=True)
+            cols[1].markdown(f"<span class='score-badge badge-{color}'>{r['score']:.1f}/100</span>", unsafe_allow_html=True)
+            cols[2].markdown(f"RSI: **{r['rsi']:.0f}**")
+            cols[3].markdown(f"{tr('Prix', 'Price')}: **{r['price']:.2f}**")
+            cols[4].markdown(f"{tr('Baisse', 'Drop')}: **{r['drawdown_pct']:.1f}%**")
+            cols[5].markdown(label)
+            cols[6].button(
+                tr("Détails ↗", "Details ↗"),
+                key=f"details_{r['ticker']}",
+                use_container_width=True,
+                on_click=lambda ticker=r["ticker"]: st.session_state.update(selected_detail_ticker=ticker),
+            )
+            st.divider()
 
     # ---------------- CHATBOT ----------------
     with tab_chat:
